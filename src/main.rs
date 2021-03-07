@@ -10,7 +10,7 @@ fn main() {
     let rom = Rom::new(&mut reader).unwrap();
     let mut gb = Gb::new(rom);
 
-    gb.reset();
+    gb.reset().unwrap();
 
     loop {
         gb.tick().unwrap();

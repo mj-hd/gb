@@ -17,8 +17,8 @@ impl Gb {
         Gb { cpu }
     }
 
-    pub fn reset(&mut self) {
-        self.cpu.reset();
+    pub fn reset(&mut self) -> Result<()> {
+        self.cpu.reset()
     }
 
     pub fn tick(&mut self) -> Result<()> {

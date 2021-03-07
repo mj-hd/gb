@@ -1,347 +1,7 @@
 use crate::bus::Bus;
-use anyhow::{bail, Context, Result};
-use num_derive::FromPrimitive;
-use num_traits::FromPrimitive;
-
-#[derive(FromPrimitive, Copy, Clone, Debug)]
-enum Opecode {
-    Nop = 0x00,
-    Ld8Bim8 = 0x06,
-    Ld8Cim8 = 0x0E,
-    Ld8Dim8 = 0x16,
-    Ld8Eim8 = 0x1E,
-    Ld8Him8 = 0x26,
-    Ld8Lim8 = 0x2E,
-    Ld8AA = 0x7F,
-    Ld8AB = 0x78,
-    Ld8AC = 0x79,
-    Ld8AD = 0x7A,
-    Ld8AE = 0x7B,
-    Ld8AH = 0x7C,
-    Ld8AL = 0x7D,
-    Ld8AaddrHl = 0x7E,
-    Ld8BB = 0x40,
-    Ld8BC = 0x41,
-    Ld8BD = 0x42,
-    Ld8BE = 0x43,
-    Ld8BH = 0x44,
-    Ld8BL = 0x45,
-    Ld8BaddrHl = 0x46,
-    Ld8CB = 0x48,
-    Ld8CC = 0x49,
-    Ld8CD = 0x4A,
-    Ld8CE = 0x4B,
-    Ld8CH = 0x4C,
-    Ld8CL = 0x4D,
-    Ld8CaddrHl = 0x4E,
-    Ld8DB = 0x50,
-    Ld8DC = 0x51,
-    Ld8DD = 0x52,
-    Ld8DE = 0x53,
-    Ld8DH = 0x54,
-    Ld8DL = 0x55,
-    Ld8DaddrHl = 0x56,
-    Ld8EB = 0x58,
-    Ld8EC = 0x59,
-    Ld8ED = 0x5A,
-    Ld8EE = 0x5B,
-    Ld8EH = 0x5C,
-    Ld8EL = 0x5D,
-    Ld8EaddrHl = 0x5E,
-    Ld8HB = 0x60,
-    Ld8HC = 0x61,
-    Ld8HD = 0x62,
-    Ld8HE = 0x63,
-    Ld8HH = 0x64,
-    Ld8HL = 0x65,
-    Ld8HaddrHl = 0x66,
-    Ld8LB = 0x68,
-    Ld8LC = 0x69,
-    Ld8LD = 0x6A,
-    Ld8LE = 0x6B,
-    Ld8LH = 0x6C,
-    Ld8LL = 0x6D,
-    Ld8LaddrHl = 0x6E,
-    Ld8addrHlB = 0x70,
-    Ld8addrHlC = 0x71,
-    Ld8addrHlD = 0x72,
-    Ld8addrHlE = 0x73,
-    Ld8addrHlH = 0x74,
-    Ld8addrHlL = 0x75,
-    Ld8addrHlIm8 = 0x36,
-    Ld8AaddrBc = 0x0A,
-    Ld8AaddrDe = 0x1A,
-    Ld8Aaddr16 = 0xFA,
-    Ld8Aim8 = 0x3E,
-    Ld8BA = 0x47,
-    Ld8CA = 0x4F,
-    Ld8DA = 0x57,
-    Ld8EA = 0x5F,
-    Ld8HA = 0x67,
-    Ld8LA = 0x6F,
-    Ld8addrBcA = 0x02,
-    Ld8addrDeA = 0x12,
-    Ld8addrHlA = 0x77,
-    Ld8addr16A = 0xEA,
-    Ld8AaddrIndexC = 0xF2,
-    Ld8addrIndexCA = 0xE2,
-    Ldd8AaddrHl = 0x3A,
-    Ldd8addrHlA = 0x32,
-    Ldi8AaddrHl = 0x2A,
-    LdiaddrHlA = 0x22,
-    LdhaddrIndex8A = 0xE0,
-    LdhAaddrIndex8 = 0xF0,
-    Ld16Bcim16 = 0x01,
-    Ld16Deim16 = 0x11,
-    Ld16Hlim16 = 0x21,
-    Ld16Spim16 = 0x31,
-    Ld16SpHl = 0xF9,
-    Ldhl16Spim8 = 0xF8,
-    Ldh16addr16Sp = 0x08,
-    Push16Af = 0xF5,
-    Push16Bc = 0xC5,
-    Push16De = 0xD5,
-    Push16Hl = 0xE5,
-    Pop16Af = 0xF1,
-    Pop16Bc = 0xC1,
-    Pop16De = 0xD1,
-    Pop16Hl = 0xE1,
-    Add8AA = 0x87,
-    Add8AB = 0x80,
-    Add8AC = 0x81,
-    Add8AD = 0x82,
-    Add8AE = 0x83,
-    Add8AH = 0x84,
-    Add8AL = 0x85,
-    Add8AaddrHl = 0x86,
-    Add8Aim8 = 0xC6,
-    Adc8AA = 0x8F,
-    Adc8AB = 0x88,
-    Adc8AC = 0x89,
-    Adc8AD = 0x8A,
-    Adc8AE = 0x8B,
-    Adc8AH = 0x8C,
-    Adc8AL = 0x8D,
-    Adc8AaddrHl = 0x8E,
-    Adc8Aim8 = 0xCE,
-    Sub8A = 0x97,
-    Sub8B = 0x90,
-    Sub8C = 0x91,
-    Sub8D = 0x92,
-    Sub8E = 0x93,
-    Sub8H = 0x94,
-    Sub8L = 0x95,
-    Sub8addrHl = 0x96,
-    Sub8im8 = 0xD6,
-    Sbc8AA = 0x9F,
-    Sbc8AB = 0x98,
-    Sbc8AC = 0x99,
-    Sbc8AD = 0x9A,
-    Sbc8AE = 0x9B,
-    Sbc8AH = 0x9C,
-    Sbc8AL = 0x9D,
-    Sbc8AaddrHl = 0x9E,
-    And8A = 0xA7,
-    And8B = 0xA0,
-    And8C = 0xA1,
-    And8D = 0xA2,
-    And8E = 0xA3,
-    And8H = 0xA4,
-    And8L = 0xA5,
-    And8addrHl = 0xA6,
-    And8im8 = 0xE6,
-    Or8A = 0xB7,
-    Or8B = 0xB0,
-    Or8C = 0xB1,
-    Or8D = 0xB2,
-    Or8E = 0xB3,
-    Or8H = 0xB4,
-    Or8L = 0xB5,
-    Or8addrHl = 0xB6,
-    Or8im8 = 0xF6,
-    Xor8A = 0xAF,
-    Xor8B = 0xA8,
-    Xor8C = 0xA9,
-    Xor8D = 0xAA,
-    Xor8E = 0xAB,
-    Xor8H = 0xAC,
-    Xor8L = 0xAD,
-    Xor8addrHl = 0xAE,
-    Xor8im8 = 0xEE,
-    Cp8A = 0xBF,
-    Cp8B = 0xB8,
-    Cp8C = 0xB9,
-    Cp8D = 0xBA,
-    Cp8E = 0xBB,
-    Cp8H = 0xBC,
-    Cp8L = 0xBD,
-    Cp8addrHl = 0xBE,
-    Cp8im8 = 0xFE,
-    Inc8A = 0x3C,
-    Inc8B = 0x04,
-    Inc8C = 0x0C,
-    Inc8D = 0x14,
-    Inc8E = 0x1C,
-    Inc8H = 0x24,
-    Inc8L = 0x2C,
-    Inc8addrHl = 0x34,
-    Dec8A = 0x3D,
-    Dec8B = 0x05,
-    Dec8C = 0x0D,
-    Dec8D = 0x15,
-    Dec8E = 0x1D,
-    Dec8H = 0x25,
-    Dec8L = 0x2D,
-    Dec8addrHl = 0x35,
-    Add16HlBc = 0x09,
-    Add16HlDe = 0x19,
-    Add16HlHl = 0x29,
-    Add16HlSp = 0x39,
-    Add16Spim8 = 0xE8,
-    Inc16Bc = 0x03,
-    Inc16De = 0x13,
-    Inc16Hl = 0x23,
-    Inc16Sp = 0x33,
-    Dec16Bc = 0x0B,
-    Dec16De = 0x1B,
-    Dec16Hl = 0x2B,
-    Dec16Sp = 0x3B,
-    Prefix = 0xCB,
-    Daa = 0x27,
-    Cpl = 0x2F,
-    Ccf = 0x3F,
-    Scf = 0x37,
-    Halt = 0x76,
-    Stop = 0x10,
-    Di = 0xF3,
-    Ei = 0xFB,
-    Rlca = 0x07,
-    Rla = 0x17,
-    Rrca = 0x0F,
-    Rra = 0x1F,
-    Jpaddr16 = 0xC3,
-    JpNzaddr16 = 0xC2,
-    JpZaddr16 = 0xCA,
-    JpNcaddr16 = 0xD2,
-    JpCaddr16 = 0xDA,
-    JpaddrHl = 0xE9,
-    JraddrIndex8 = 0x18,
-    JrNzaddrIndex8 = 0x20,
-    JrZaddrIndex8 = 0x28,
-    JrNcaddrIndex8 = 0x30,
-    JrCaddrIndex8 = 0x38,
-    Calladdr16 = 0xCD,
-    CallNzaddr16 = 0xC4,
-    CallZaddr16 = 0xCC,
-    CallNcaddr16 = 0xD4,
-    CallCaddr16 = 0xDC,
-    Rst00h = 0xC7,
-    Rst08h = 0xCF,
-    Rst10h = 0xD7,
-    Rst18h = 0xDF,
-    Rst20h = 0xE7,
-    Rst28h = 0xEF,
-    Rst30h = 0xF7,
-    Rst38h = 0xFF,
-    Ret = 0xC9,
-    RetNz = 0xC0,
-    RetZ = 0xC8,
-    RetNc = 0xD0,
-    RetC = 0xD8,
-    Reti = 0xD9,
-}
-
-#[derive(FromPrimitive, Copy, Clone, Debug)]
-enum PrefixedOpecode {
-    SwapA = 0x37,
-    SwapB = 0x30,
-    SwapC = 0x31,
-    SwapD = 0x32,
-    SwapE = 0x33,
-    SwapH = 0x34,
-    SwapL = 0x35,
-    SwapaddrHl = 0x36,
-    RlcA = 0x07,
-    RlcB = 0x00,
-    RlcC = 0x01,
-    RlcD = 0x02,
-    RlcE = 0x03,
-    RlcH = 0x04,
-    RlcL = 0x05,
-    RlcaddrHl = 0x06,
-    RladdrA = 0x17,
-    RladdrB = 0x10,
-    RladdrC = 0x11,
-    RladdrD = 0x12,
-    RladdrE = 0x13,
-    RladdrH = 0x14,
-    RladdrL = 0x15,
-    RladdrHl = 0x16,
-    RrcA = 0x0F,
-    RrcB = 0x08,
-    RrcC = 0x09,
-    RrcD = 0x0A,
-    RrcE = 0x0B,
-    RrcH = 0x0C,
-    RrcL = 0x0D,
-    RrcaddrHl = 0x0E,
-    RrA = 0x1F,
-    RrB = 0x18,
-    RrC = 0x19,
-    RrD = 0x1A,
-    RrE = 0x1B,
-    RrH = 0x1C,
-    RrL = 0x1D,
-    RraddrHl = 0x1E,
-    SlaA = 0x27,
-    SlaB = 0x20,
-    SlaC = 0x21,
-    SlaD = 0x22,
-    SlaE = 0x23,
-    SlaH = 0x24,
-    SlaL = 0x25,
-    SlaaddrHl = 0x26,
-    SraA = 0x2F,
-    SraB = 0x28,
-    SraC = 0x29,
-    SraD = 0x2A,
-    SraE = 0x2B,
-    SraH = 0x2C,
-    SraL = 0x2D,
-    SraaddrHl = 0x2E,
-    SrlA = 0x3F,
-    SrlB = 0x38,
-    SrlC = 0x39,
-    SrlD = 0x3A,
-    SrlE = 0x3B,
-    SrlH = 0x3C,
-    SrlL = 0x3D,
-    SrladdrHl = 0x3E,
-    BitA = 0x47,
-    BitB = 0x40,
-    BitC = 0x41,
-    BitD = 0x42,
-    BitE = 0x43,
-    BitH = 0x44,
-    BitL = 0x45,
-    BitaddrHl = 0x46,
-    Setim8A = 0xC7,
-    Setim8B = 0xC0,
-    Setim8C = 0xC1,
-    Setim8D = 0xC2,
-    Setim8E = 0xC3,
-    Setim8H = 0xC4,
-    Setim8L = 0xC5,
-    Setim8addrHl = 0xC6,
-    Resim8A = 0x87,
-    Resim8B = 0x80,
-    Resim8C = 0x81,
-    Resim8D = 0x82,
-    Resim8E = 0x83,
-    Resim8H = 0x84,
-    Resim8L = 0x85,
-    Resim8addrHl = 0x86,
-}
+use anyhow::{bail, Result};
+use bitmatch::bitmatch;
+use std::ops::{BitAnd, Shr};
 
 pub struct Cpu {
     af: u16,
@@ -370,14 +30,48 @@ impl Cpu {
         }
     }
 
-    pub fn reset(&mut self) {
-        self.af = 0;
-        self.bc = 0;
-        self.de = 0;
-        self.hl = 0;
-        self.sp = 0;
+    pub fn reset(&mut self) -> Result<()> {
+        self.af = 0x01B0;
+        self.bc = 0x0013;
+        self.de = 0x00D8;
+        self.hl = 0x014D;
+        self.sp = 0xFFFE;
         self.pc = 0x0100;
         self.stalls = 0;
+
+        self.bus.write(0xFF05, 0x00)?;
+        self.bus.write(0xFF06, 0x00)?;
+        self.bus.write(0xFF07, 0x00)?;
+        self.bus.write(0xFF10, 0x80)?;
+        self.bus.write(0xFF11, 0xBF)?;
+        self.bus.write(0xFF12, 0xF3)?;
+        self.bus.write(0xFF14, 0xF3)?;
+        self.bus.write(0xFF16, 0x3F)?;
+        self.bus.write(0xFF17, 0x00)?;
+        self.bus.write(0xFF19, 0xBF)?;
+        self.bus.write(0xFF1A, 0x7F)?;
+        self.bus.write(0xFF1B, 0xFF)?;
+        self.bus.write(0xFF1C, 0x9F)?;
+        self.bus.write(0xFF1E, 0xBF)?;
+        self.bus.write(0xFF20, 0xFF)?;
+        self.bus.write(0xFF21, 0x00)?;
+        self.bus.write(0xFF22, 0x00)?;
+        self.bus.write(0xFF23, 0xBF)?;
+        self.bus.write(0xFF24, 0x77)?;
+        self.bus.write(0xFF25, 0xF3)?;
+        self.bus.write(0xFF26, 0xF1)?;
+        self.bus.write(0xFF40, 0x91)?;
+        self.bus.write(0xFF42, 0x00)?;
+        self.bus.write(0xFF43, 0x00)?;
+        self.bus.write(0xFF45, 0x00)?;
+        self.bus.write(0xFF47, 0xFC)?;
+        self.bus.write(0xFF48, 0xFF)?;
+        self.bus.write(0xFF49, 0xFF)?;
+        self.bus.write(0xFF4A, 0x00)?;
+        self.bus.write(0xFF4B, 0x00)?;
+        self.bus.write(0xFFFF, 0x00)?;
+
+        Ok(())
     }
 
     pub fn tick(&mut self) -> Result<()> {
@@ -389,14 +83,11 @@ impl Cpu {
             return Ok(());
         }
 
-        let byte = self.bus.read(self.pc)?;
+        let opecode = self.bus.read(self.pc)?;
 
-        let opecode =
-            Opecode::from_u8(byte).with_context(|| format!("unknown opecode {:#X}", byte))?;
+        println!("PC: {:#X}, DATA: {:#X}", self.pc, opecode);
 
-        println!("PC: {:#X}, DATA: {:#X}, OPE: {:?}", self.pc, byte, opecode);
-
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
 
         self.do_mnemonic(opecode)?;
 
@@ -526,6 +217,38 @@ impl Cpu {
         }
     }
 
+    fn r16(&self, index: u8) -> Result<u16> {
+        match index {
+            0 => Ok(self.bc),
+            1 => Ok(self.de),
+            2 => Ok(self.hl),
+            3 => Ok(self.sp),
+            _ => bail!("unknown r8 {}", index),
+        }
+    }
+
+    fn set_r16(&mut self, index: u8, val: u16) -> Result<()> {
+        match index {
+            0 => {
+                self.bc = val;
+                Ok(())
+            }
+            1 => {
+                self.de = val;
+                Ok(())
+            }
+            2 => {
+                self.hl = val;
+                Ok(())
+            }
+            3 => {
+                self.sp = val;
+                Ok(())
+            }
+            _ => bail!("unknown r8 {}", index),
+        }
+    }
+
     pub fn flag_z(&self) -> bool {
         (self.af >> 8) & 0b10000000 > 0
     }
@@ -566,86 +289,274 @@ impl Cpu {
         self.af |= ((val as u16) << 8) << 4;
     }
 
-    fn do_mnemonic(&mut self, opecode: Opecode) -> Result<()> {
-        let r8_index_right = opecode as u8 & 0b00000111;
-        let r8_index_left = (opecode as u8 & 0b00111000) >> 3;
+    fn carry_positive_n<
+        T: Copy + PartialEq + From<bool> + Shr<T, Output = T> + BitAnd<T, Output = T>,
+    >(
+        &self,
+        result: T,
+        left: T,
+        right: T,
+        n: T,
+    ) -> bool {
+        let left_s = (left >> n) & n;
+        let right_s = (right >> n) & n;
+        let result_s = (result >> n) & n;
 
+        (left_s == T::from(false) && right_s == T::from(false) && result_s == T::from(true))
+            || (left_s == T::from(true) && right_s == T::from(true) && result_s == T::from(false))
+    }
+
+    fn carry_negative_n<
+        T: Copy + PartialEq + From<bool> + Shr<T, Output = T> + BitAnd<T, Output = T>,
+    >(
+        &self,
+        result: T,
+        left: T,
+        right: T,
+        n: T,
+    ) -> bool {
+        let left_s = (left >> n) & n;
+        let right_s = (right >> n) & n;
+        let result_s = (result >> n) & n;
+
+        (left_s == T::from(false) && right_s == T::from(true) && result_s == T::from(true))
+            || (left_s == T::from(true) && right_s == T::from(false) && result_s == T::from(false))
+    }
+
+    fn carry_positive(&self, result: u8, left: u8, right: u8) -> bool {
+        self.carry_positive_n(result, left, right, 7)
+    }
+
+    fn carry_negative(&self, result: u8, left: u8, right: u8) -> bool {
+        self.carry_negative_n(result, left, right, 7)
+    }
+
+    fn half_carry_positive(&self, result: u8, left: u8, right: u8) -> bool {
+        self.carry_positive_n(result, left, right, 3)
+    }
+
+    fn half_carry_negative(&self, result: u8, left: u8, right: u8) -> bool {
+        self.carry_negative_n(result, left, right, 3)
+    }
+
+    fn carry_positive_16(&self, result: u16, left: u16, right: u16) -> bool {
+        self.carry_positive_n(result, left, right, 15)
+    }
+
+    fn carry_negative_16(&self, result: u16, left: u16, right: u16) -> bool {
+        self.carry_negative_n(result, left, right, 15)
+    }
+
+    fn half_carry_positive_16(&self, result: u16, left: u16, right: u16) -> bool {
+        self.carry_positive_n(result, left, right, 11)
+    }
+
+    fn half_carry_negative_16(&self, result: u16, left: u16, right: u16) -> bool {
+        self.carry_negative_n(result, left, right, 11)
+    }
+
+    #[bitmatch]
+    fn do_mnemonic(&mut self, opecode: u8) -> Result<()> {
+        #[bitmatch]
         match &opecode {
-            Opecode::Nop => self.nop(),
-            Opecode::Ld8Aim8
-            | Opecode::Ld8Bim8
-            | Opecode::Ld8Cim8
-            | Opecode::Ld8Dim8
-            | Opecode::Ld8Eim8
-            | Opecode::Ld8Him8
-            | Opecode::Ld8Lim8
-            | Opecode::Ld8addrHlIm8 => self.load_8_r_im8(r8_index_left),
-            Opecode::Ld8AA
-            | Opecode::Ld8AB
-            | Opecode::Ld8AC
-            | Opecode::Ld8AD
-            | Opecode::Ld8AE
-            | Opecode::Ld8AH
-            | Opecode::Ld8AL
-            | Opecode::Ld8AaddrHl
-            | Opecode::Ld8BB
-            | Opecode::Ld8BC
-            | Opecode::Ld8BD
-            | Opecode::Ld8BE
-            | Opecode::Ld8BH
-            | Opecode::Ld8BL
-            | Opecode::Ld8BaddrHl
-            | Opecode::Ld8CB
-            | Opecode::Ld8CC
-            | Opecode::Ld8CD
-            | Opecode::Ld8CE
-            | Opecode::Ld8CH
-            | Opecode::Ld8CL
-            | Opecode::Ld8CaddrHl
-            | Opecode::Ld8DB
-            | Opecode::Ld8DC
-            | Opecode::Ld8DD
-            | Opecode::Ld8DE
-            | Opecode::Ld8DH
-            | Opecode::Ld8DL
-            | Opecode::Ld8DaddrHl
-            | Opecode::Ld8EB
-            | Opecode::Ld8EC
-            | Opecode::Ld8ED
-            | Opecode::Ld8EE
-            | Opecode::Ld8EH
-            | Opecode::Ld8EL
-            | Opecode::Ld8EaddrHl
-            | Opecode::Ld8HB
-            | Opecode::Ld8HC
-            | Opecode::Ld8HD
-            | Opecode::Ld8HE
-            | Opecode::Ld8HH
-            | Opecode::Ld8HL
-            | Opecode::Ld8HaddrHl
-            | Opecode::Ld8LB
-            | Opecode::Ld8LC
-            | Opecode::Ld8LD
-            | Opecode::Ld8LE
-            | Opecode::Ld8LH
-            | Opecode::Ld8LL
-            | Opecode::Ld8LaddrHl
-            | Opecode::Ld8addrHlB
-            | Opecode::Ld8addrHlC
-            | Opecode::Ld8addrHlD
-            | Opecode::Ld8addrHlE
-            | Opecode::Ld8addrHlH
-            | Opecode::Ld8addrHlL => self.load_8_r_r(r8_index_left, r8_index_right),
-            Opecode::Inc8A
-            | Opecode::Inc8B
-            | Opecode::Inc8C
-            | Opecode::Inc8D
-            | Opecode::Inc8E
-            | Opecode::Inc8H
-            | Opecode::Inc8L
-            | Opecode::Inc8addrHl => self.inc_8_r(r8_index_left),
-            Opecode::Jpaddr16 => self.jp_16(),
+            // NOP
+            "00000000" => self.nop(),
+            // HALT
+            "01110110" => self.halt(),
+            // STOP
+            "00010000" => self.stop(),
+            // DI
+            "11110011" => self.di(),
+            // EI
+            "11111011" => self.ei(),
+            // LD r, r'
+            // LD r, (HL)
+            // LD (HL), r
+            "01xxxyyy" => self.load_8_r_r(x, y),
+            // LD r, n
+            // LD (HL), n
+            "00xxx110" => self.load_8_r_im8(x),
+            // LD A, (BC)
+            "00001010" => self.load_8_a_addr_bc(),
+            // LD A, (DE)
+            "00011010" => self.load_8_a_addr_de(),
+            // LD (BC), A
+            "00000010" => self.load_8_addr_bc_a(),
+            // LD (DE), A
+            "00010010" => self.load_8_addr_de_a(),
+            // LD A, (nn)
+            "11111010" => self.load_8_a_addr_im16(),
+            // LD (nn), A
+            "11101010" => self.load_8_addr_im16_a(),
+            // LDH A, (C)
+            "11110010" => self.load_8_a_addr_index_c(),
+            // LDH (C), A
+            "11100010" => self.load_8_addr_index_c_a(),
+            // LDH A, (n)
+            "11110000" => self.load_8_a_addr_index_im8(),
+            // LDH (n), A
+            "11100000" => self.load_8_addr_index_im8_a(),
+            // LD A, (HL-)
+            "00111010" => self.load_dec_8_a_addr_hl(),
+            // LD (HL-), A
+            "00110010" => self.load_dec_8_addr_hl_a(),
+            // LD A, (HL+)
+            "00101010" => self.load_inc_8_a_addr_hl(),
+            // LD (HL+), A
+            "00100010" => self.load_inc_8_addr_hl_a(),
+            // LD rr, nn
+            "00xx0001" => self.load_16_rr_im16(x),
+            // LD (nn), SP
+            "00001000" => self.load_16_addr_im16_sp(),
+            // LD SP, HL
+            "11111001" => self.load_16_sp_hl(),
+            // PUSH rr
+            "11xx0101" => self.push_16_rr(x),
+            // POP rr
+            "11xx0001" => self.pop_16_rr(x),
+            // ADD A, r
+            "10000xxx" => self.add_8_a_r(x),
+            // ADD A, n
+            "11000110" => self.add_8_a_im8(),
+            // ADC A, r
+            "10001xxx" => self.add_carry_8_a_r(x),
+            // ADC A, n
+            "11001110" => self.add_carry_8_a_im8(),
+            // SUB A, r
+            "10010xxx" => self.sub_8_a_r(x),
+            // SUB n
+            "11010110" => self.sub_8_a_im8(),
+            // SBC A, r
+            "10011xxx" => self.sub_carry_8_a_r(x),
+            // SBC A, n
+            "11011110" => self.sub_carry_8_a_im8(),
+            // AND A, r
+            "10100xxx" => self.and_8_a_r(x),
+            // AND A, n
+            "11100110" => self.and_8_a_im8(),
+            // OR A, r
+            "10110xxx" => self.or_8_a_r(x),
+            // OR A, n
+            "11110110" => self.or_8_a_im8(),
+            // XOR A, r
+            "10101xxx" => self.xor_8_a_r(x),
+            // XOR A, n
+            "11101110" => self.xor_8_a_im8(),
+            // CP A, r
+            "10111xxx" => self.cp_8_a_r(x),
+            // CP A, n
+            "11111110" => self.cp_8_a_im8(),
+            // INC r
+            "00xxx100" => self.inc_8_r(x),
+            // DEC r
+            "00xxx101" => self.dec_8_r(x),
+            // ADD HL, rr
+            "00xx1001" => self.add_16_hl_rr(x),
+            // ADD SP, n
+            "11101000" => self.add_16_sp_im8(),
+            // INC rr
+            "00xx0011" => self.inc_16_rr(x),
+            // DEC rr
+            "00xx1011" => self.dec_16_rr(x),
+            // RLCA
+            "00000111" => self.rlca_8(),
+            // RLA
+            "00010111" => self.rla_8(),
+            // RRCA
+            "00001111" => self.rrca_8(),
+            // RRA
+            "00011111" => self.rra_8(),
+            // JP nn
+            "11000011" => self.jp_16(),
+            // JP NZ, nn
+            "11000010" => self.jp_16_nz(),
+            // JP Z, nn
+            "11001010" => self.jp_16_z(),
+            // JP NC, nn
+            "11010010" => self.jp_16_nc(),
+            // JP C, nn
+            "11011010" => self.jp_16_c(),
+            // JP (HL)
+            "11101001" => self.jp_16_addr_hl(),
+            // JR
+            "00011000" => self.jr_8_im_8(),
+            // JR NZ, nn
+            "00100000" => self.jr_8_nz(),
+            // JR Z, nn
+            "00101000" => self.jr_8_z(),
+            // JR NC, nn
+            "00110000" => self.jr_8_nc(),
+            // JR C, nn
+            "00111000" => self.jr_8_c(),
+            // CALL nn
+            "11001101" => self.call_16(),
+            // CALL NZ, nn
+            "11000100" => self.call_16_nz(),
+            // CALL Z, nn
+            "11001100" => self.call_16_z(),
+            // CALL NC, nn
+            "11010100" => self.call_16_nc(),
+            // CALL C, nn
+            "11011100" => self.call_16_c(),
+            // RST 00H~38H
+            "11xxx111" => self.restart(x),
+            // RET
+            "11001001" => self.ret(),
+            // RET NZ
+            "11000000" => self.ret_nz(),
+            // RET Z
+            "11001000" => self.ret_z(),
+            // RET NC
+            "11010000" => self.ret_nc(),
+            // RET C
+            "11011000" => self.ret_c(),
+            // RETI
+            "11011001" => self.reti(),
+            // CB Prefixed Instructions
+            "11001011" => {
+                let prefixed = self.bus.read(self.pc)?;
+                self.pc += self.pc.wrapping_add(1);
+                self.do_mnemonic_prefixed(prefixed)
+            }
             _ => bail!("unimplemented opecode {:?}", opecode),
+        }
+    }
+
+    #[bitmatch]
+    fn do_mnemonic_prefixed(&mut self, opecode: u8) -> Result<()> {
+        #[bitmatch]
+        match &opecode {
+            // SWAP r
+            "01000xxx" => self.swap_8_r(x),
+            // DAA
+            "00100111" => self.decimal_adjust_8_a(),
+            // CPL
+            "00101111" => self.complement_8_a(),
+            // CCF
+            "00111111" => self.complement_carry(),
+            // SCF
+            "00110111" => self.set_carry_flag(),
+            // RLC r
+            "00000xxx" => self.rlc_8_r(x),
+            // RL r
+            "00010xxx" => self.rl_8_r(x),
+            // RRC r
+            "00001xxx" => self.rrc_8_r(x),
+            // RR r
+            "00011xxx" => self.rr_8_r(x),
+            // SLA r
+            "00100xxx" => self.sla_8_r(x),
+            // SRA r
+            "00101xxx" => self.sra_8_r(x),
+            // SRL r
+            "00111xxx" => self.srl_8_r(x),
+            // BIT b, r
+            "01000xxx" => self.bit_8_im_bit_r(x),
+            // SET b, r
+            "11000xxx" => self.set_8_im_bit_r(x),
+            // RES b, r
+            "10000xxx" => self.reset_8_im_bit_r(x),
+            _ => bail!("unimplemented prefixed opecode {:?}", opecode),
         }
     }
 
@@ -653,10 +564,34 @@ impl Cpu {
         Ok(())
     }
 
+    pub fn halt(&mut self) -> Result<()> {
+        unimplemented!("停止する");
+
+        Ok(())
+    }
+
+    pub fn stop(&mut self) -> Result<()> {
+        unimplemented!("停止して、LCDそのまま");
+
+        Ok(())
+    }
+
+    pub fn di(&mut self) -> Result<()> {
+        unimplemented!("直後の命令実行後に割り込み中止");
+
+        Ok(())
+    }
+
+    pub fn ei(&mut self) -> Result<()> {
+        unimplemented!("直後の命令実行後に割り込み再開");
+
+        Ok(())
+    }
+
     pub fn load_8_r_im8(&mut self, index: u8) -> Result<()> {
         let val = self.bus.read(self.pc)?;
 
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
 
         self.set_r8(index, val)?;
 
@@ -670,18 +605,678 @@ impl Cpu {
         Ok(())
     }
 
-    pub fn inc_8_r(&mut self, index: u8) -> Result<()> {
-        let val = self.r8(index)?;
-        let (res, c) = val.overflowing_add(1);
-
-        self.set_r8(index, res)?;
-
-        self.set_flag_z(res == 0);
-        self.set_flag_n(false);
-        self.set_flag_h((val & 0x08) + 1 > 0x08);
-        self.set_flag_c(c);
+    pub fn load_8_a_addr_bc(&mut self) -> Result<()> {
+        let val = self.bus.read(self.bc)?;
+        self.set_a(val);
 
         Ok(())
+    }
+
+    pub fn load_8_a_addr_de(&mut self) -> Result<()> {
+        let val = self.bus.read(self.de)?;
+        self.set_a(val);
+
+        Ok(())
+    }
+
+    pub fn load_8_addr_bc_a(&mut self) -> Result<()> {
+        self.bus.write(self.bc, self.a())
+    }
+
+    pub fn load_8_addr_de_a(&mut self) -> Result<()> {
+        self.bus.write(self.de, self.a())
+    }
+
+    pub fn load_8_a_addr_im16(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+        let val = self.bus.read(addr)?;
+        self.set_a(val);
+
+        Ok(())
+    }
+
+    pub fn load_8_addr_im16_a(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+        let val = self.bus.read(addr)?;
+        self.bus.write(addr, val)
+    }
+
+    pub fn load_8_a_addr_index_c(&mut self) -> Result<()> {
+        let val = self.bus.read(0xFF00 + self.c() as u16)?;
+        self.set_a(val);
+
+        Ok(())
+    }
+
+    pub fn load_8_addr_index_c_a(&mut self) -> Result<()> {
+        self.bus.write(0xFF00 + self.c() as u16, self.a())
+    }
+
+    pub fn load_8_a_addr_index_im8(&mut self) -> Result<()> {
+        let index = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let val = self.bus.read(0xFF00 + index as u16)?;
+        self.set_a(val);
+
+        Ok(())
+    }
+
+    pub fn load_8_addr_index_im8_a(&mut self) -> Result<()> {
+        let index = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        self.bus.write(0xFF00 + index as u16, self.a())
+    }
+
+    pub fn load_dec_8_a_addr_hl(&mut self) -> Result<()> {
+        let val = self.bus.read(self.hl)?;
+        self.hl = self.hl.wrapping_sub(1);
+        self.set_a(val);
+
+        Ok(())
+    }
+
+    pub fn load_dec_8_addr_hl_a(&mut self) -> Result<()> {
+        self.bus.write(self.hl, self.a())?;
+        self.hl = self.hl.wrapping_sub(1);
+
+        Ok(())
+    }
+
+    pub fn load_inc_8_a_addr_hl(&mut self) -> Result<()> {
+        let val = self.bus.read(self.hl)?;
+        self.hl = self.hl.wrapping_add(1);
+        self.set_a(val);
+
+        Ok(())
+    }
+
+    pub fn load_inc_8_addr_hl_a(&mut self) -> Result<()> {
+        self.bus.write(self.hl, self.a())?;
+        self.hl = self.hl.wrapping_add(1);
+
+        Ok(())
+    }
+
+    pub fn load_16_rr_im16(&mut self, index: u8) -> Result<()> {
+        let val = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+        self.set_r16(index, val)
+    }
+
+    pub fn load_16_addr_im16_sp(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+        let val = self.bus.read_word(addr)?;
+        self.sp = val;
+
+        Ok(())
+    }
+
+    pub fn load_16_sp_hl(&mut self) -> Result<()> {
+        self.sp = self.hl;
+
+        Ok(())
+    }
+
+    pub fn push_16_rr(&mut self, index: u8) -> Result<()> {
+        let val = self.r16(index)?;
+        self.bus.write_word(self.sp, val)?;
+        self.sp = self.sp.wrapping_sub(2);
+
+        Ok(())
+    }
+
+    pub fn pop_16_rr(&mut self, index: u8) -> Result<()> {
+        self.sp = self.sp.wrapping_add(2);
+        let val = self.bus.read_word(self.sp)?;
+        self.set_r16(index, val)?;
+
+        Ok(())
+    }
+
+    pub fn add_8_a_r(&mut self, index: u8) -> Result<()> {
+        let left = self.a();
+        let right = self.r8(index)?;
+        let result = left.wrapping_add(right);
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(self.half_carry_positive(result, left, right));
+        self.set_flag_c(self.carry_positive(result, left, right));
+
+        Ok(())
+    }
+
+    pub fn add_8_a_im8(&mut self) -> Result<()> {
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let left = self.a();
+        let result = left.wrapping_add(right);
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(self.half_carry_positive(result, left, right));
+        self.set_flag_c(self.carry_positive(result, left, right));
+
+        Ok(())
+    }
+
+    pub fn add_carry_8_a_r(&mut self, index: u8) -> Result<()> {
+        let c = self.flag_c() as u8;
+        let right = self.r8(index)?;
+        let left = self.a();
+        let result1 = left.wrapping_add(right);
+        let result2 = result1.wrapping_add(c);
+
+        let c1 = self.carry_positive(result1, left, right);
+        let h1 = self.half_carry_positive(result1, left, right);
+        let c2 = self.carry_positive(result2, result1, c);
+        let h2 = self.half_carry_positive(result2, result1, c);
+
+        self.set_a(result2);
+
+        self.set_flag_z(result2 == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(h1 || h2);
+        self.set_flag_c(c1 || c2);
+
+        Ok(())
+    }
+
+    pub fn add_carry_8_a_im8(&mut self) -> Result<()> {
+        let c = self.flag_c() as u8;
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let left = self.a();
+        let result1 = left.wrapping_add(right);
+        let result2 = result1.wrapping_add(c);
+
+        let c1 = self.carry_positive(result1, left, right);
+        let h1 = self.half_carry_positive(result1, left, right);
+        let c2 = self.carry_positive(result2, result1, c);
+        let h2 = self.half_carry_positive(result2, result1, c);
+
+        self.set_a(result2);
+
+        self.set_flag_z(result2 == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(h1 || h2);
+        self.set_flag_c(c1 || c2);
+
+        Ok(())
+    }
+
+    pub fn sub_8_a_r(&mut self, index: u8) -> Result<()> {
+        let left = self.a();
+        let right = self.r8(index)?;
+        let result = left.wrapping_sub(right);
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(true);
+        self.set_flag_h(self.half_carry_negative(result, left, right));
+        self.set_flag_c(self.carry_negative(result, left, right));
+
+        Ok(())
+    }
+
+    pub fn sub_8_a_im8(&mut self) -> Result<()> {
+        let left = self.a();
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let result = left.wrapping_sub(right);
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(true);
+        self.set_flag_h(self.half_carry_negative(result, left, right));
+        self.set_flag_c(self.carry_negative(result, left, right));
+
+        Ok(())
+    }
+
+    pub fn sub_carry_8_a_r(&mut self, index: u8) -> Result<()> {
+        let c = self.flag_c() as u8;
+        let left = self.a();
+        let right = self.r8(index)?;
+        let result1 = left.wrapping_sub(right);
+        let result2 = result1.wrapping_sub(c);
+
+        self.set_a(result2);
+
+        let c1 = self.carry_negative(result1, left, right);
+        let h1 = self.half_carry_negative(result1, left, right);
+        let c2 = self.carry_negative(result2, result1, c);
+        let h2 = self.half_carry_negative(result2, result1, c);
+
+        self.set_flag_z(result2 == 0);
+        self.set_flag_n(true);
+        self.set_flag_h(h1 || h2);
+        self.set_flag_c(c1 || c2);
+
+        Ok(())
+    }
+
+    pub fn sub_carry_8_a_im8(&mut self) -> Result<()> {
+        let c = self.flag_c() as u8;
+        let left = self.a();
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let result1 = left.wrapping_sub(right);
+        let result2 = result1.wrapping_sub(c);
+
+        self.set_a(result2);
+
+        let c1 = self.carry_negative(result1, left, right);
+        let h1 = self.half_carry_negative(result1, left, right);
+        let c2 = self.carry_negative(result2, result1, c);
+        let h2 = self.half_carry_negative(result2, result1, c);
+
+        self.set_flag_z(result2 == 0);
+        self.set_flag_n(true);
+        self.set_flag_h(h1 || h2);
+        self.set_flag_c(c1 || c2);
+
+        Ok(())
+    }
+
+    pub fn and_8_a_r(&mut self, index: u8) -> Result<()> {
+        let left = self.a();
+        let right = self.r8(index)?;
+        let result = left & right;
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(true);
+        self.set_flag_c(false);
+
+        Ok(())
+    }
+
+    pub fn and_8_a_im8(&mut self) -> Result<()> {
+        let left = self.a();
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let result = left & right;
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(true);
+        self.set_flag_c(false);
+
+        Ok(())
+    }
+
+    pub fn or_8_a_r(&mut self, index: u8) -> Result<()> {
+        let left = self.a();
+        let right = self.r8(index)?;
+        let result = left | right;
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(false);
+
+        Ok(())
+    }
+
+    pub fn or_8_a_im8(&mut self) -> Result<()> {
+        let left = self.a();
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let result = left | right;
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(false);
+
+        Ok(())
+    }
+
+    pub fn xor_8_a_r(&mut self, index: u8) -> Result<()> {
+        let left = self.a();
+        let right = self.r8(index)?;
+        let result = left ^ right;
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(false);
+
+        Ok(())
+    }
+
+    pub fn xor_8_a_im8(&mut self) -> Result<()> {
+        let left = self.a();
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let result = left ^ right;
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(false);
+
+        Ok(())
+    }
+
+    pub fn cp_8_a_r(&mut self, index: u8) -> Result<()> {
+        let left = self.a();
+        let right = self.r8(index)?;
+        let result = left.wrapping_sub(left);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(true);
+        self.set_flag_h(self.half_carry_negative(result, left, right));
+        self.set_flag_c(self.carry_negative(result, left, right));
+
+        Ok(())
+    }
+
+    pub fn cp_8_a_im8(&mut self) -> Result<()> {
+        let left = self.a();
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let result = left.wrapping_sub(left);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(true);
+        self.set_flag_h(self.half_carry_negative(result, left, right));
+        self.set_flag_c(self.carry_negative(result, left, right));
+
+        Ok(())
+    }
+    pub fn inc_8_r(&mut self, index: u8) -> Result<()> {
+        let left = self.r8(index)?;
+        let right = 1;
+        let result = left.wrapping_add(right);
+
+        self.set_r8(index, result)?;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(self.half_carry_positive(result, left, right));
+        self.set_flag_c(self.carry_positive(result, left, right));
+
+        Ok(())
+    }
+
+    pub fn dec_8_r(&mut self, index: u8) -> Result<()> {
+        let left = self.r8(index)?;
+        let right = 1;
+        let result = left.wrapping_sub(right);
+
+        self.set_r8(index, result)?;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(true);
+        self.set_flag_h(self.half_carry_negative(result, left, right));
+        self.set_flag_c(self.carry_negative(result, left, right));
+
+        Ok(())
+    }
+
+    pub fn add_16_hl_rr(&mut self, index: u8) -> Result<()> {
+        let left = self.hl;
+        let right = self.r16(index)?;
+        let result = left.wrapping_add(right);
+
+        self.hl = result;
+
+        self.set_flag_n(false);
+        self.set_flag_h(self.half_carry_positive_16(result, left, right));
+        self.set_flag_c(self.carry_positive_16(result, left, right));
+
+        Ok(())
+    }
+
+    pub fn add_16_sp_im8(&mut self) -> Result<()> {
+        let left = self.sp;
+        let right = self.bus.read(self.pc)? as u16;
+        self.pc = self.pc.wrapping_add(1);
+        let result = left.wrapping_add(right);
+
+        self.sp = result;
+
+        self.set_flag_z(false);
+        self.set_flag_n(false);
+        self.set_flag_h(self.half_carry_positive_16(result, left, right));
+        self.set_flag_c(self.carry_positive_16(result, left, right));
+
+        Ok(())
+    }
+
+    pub fn inc_16_rr(&mut self, index: u8) -> Result<()> {
+        let left = self.r16(index)?;
+        let right = 1;
+        let result = left.wrapping_add(right);
+
+        self.set_r16(index, result)
+    }
+
+    pub fn dec_16_rr(&mut self, index: u8) -> Result<()> {
+        let left = self.r16(index)?;
+        let right = 1;
+        let result = left.wrapping_sub(right);
+
+        self.set_r16(index, result)
+    }
+
+    pub fn rlca_8(&mut self) -> Result<()> {
+        let val = self.a();
+        let c = (val >> 7) & 1;
+        let result = val << 1;
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn rla_8(&mut self) -> Result<()> {
+        let val = self.a();
+        let c = (val >> 7) & 1;
+        let result = val << 1 | self.flag_c() as u8;
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn rrca_8(&mut self) -> Result<()> {
+        let val = self.a();
+        let c = val & 1;
+        let result = val >> 1;
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn rra_8(&mut self) -> Result<()> {
+        let val = self.a();
+        let c = val & 1;
+        let result = val >> 1 | ((self.flag_c() as u8) << 7);
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn rlc_8_r(&mut self, index: u8) -> Result<()> {
+        let val = self.r8(index)?;
+        let c = (val >> 7) & 1;
+        let result = val.rotate_left(1);
+
+        self.set_r8(index, result)?;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn rl_8_r(&mut self, index: u8) -> Result<()> {
+        let val = self.r8(index)?;
+        let c = (val >> 7) & 1;
+        let result = val << 1 | self.flag_c() as u8;
+
+        self.set_r8(index, result)?;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn rrc_8_r(&mut self, index: u8) -> Result<()> {
+        let val = self.r8(index)?;
+        let c = val & 1;
+        let result = val.rotate_right(1);
+
+        self.set_r8(index, result)?;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn rr_8_r(&mut self, index: u8) -> Result<()> {
+        let val = self.r8(index)?;
+        let c = val & 1;
+        let result = val >> 1 | ((self.flag_c() as u8) << 7);
+
+        self.set_r8(index, result)?;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn sla_8_r(&mut self, index: u8) -> Result<()> {
+        let val = self.r8(index)?;
+        let c = (val >> 7) & 1;
+        let result = val << 1;
+
+        self.set_r8(index, result)?;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn sra_8_r(&mut self, index: u8) -> Result<()> {
+        let val = self.r8(index)?;
+        let c = val & 1;
+        let result = val >> 1 | (val & 0b10000000);
+
+        self.set_r8(index, result)?;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn srl_8_r(&mut self, index: u8) -> Result<()> {
+        let val = self.r8(index)?;
+        let c = val & 1;
+        let result = val >> 1;
+
+        self.set_r8(index, result)?;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(c == 1);
+
+        Ok(())
+    }
+
+    pub fn bit_8_im_bit_r(&mut self, index: u8) -> Result<()> {
+        let left = self.r8(index)?;
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let result = (left >> right) & 1;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(true);
+
+        Ok(())
+    }
+
+    pub fn set_8_im_bit_r(&mut self, index: u8) -> Result<()> {
+        let left = self.r8(index)?;
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let result = left | (1 << right);
+
+        self.set_r8(index, result)
+    }
+
+    pub fn reset_8_im_bit_r(&mut self, index: u8) -> Result<()> {
+        let left = self.r8(index)?;
+        let right = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        let result = left & !(1 << right);
+
+        self.set_r8(index, result)
     }
 
     pub fn jp_16(&mut self) -> Result<()> {
@@ -691,5 +1286,298 @@ impl Cpu {
         Ok(())
     }
 
-    // TODO instructions
+    pub fn jp_16_nz(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+
+        if self.flag_nz() {
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn jp_16_z(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+
+        if self.flag_z() {
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn jp_16_nc(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+
+        if self.flag_nc() {
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn jp_16_c(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+
+        if self.flag_c() {
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn jp_16_addr_hl(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.hl)?;
+        self.pc = addr;
+
+        Ok(())
+    }
+
+    pub fn jr_8_im_8(&mut self) -> Result<()> {
+        let index = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+        self.pc = self.pc.wrapping_add(index as u16);
+
+        Ok(())
+    }
+
+    pub fn jr_8_nz(&mut self) -> Result<()> {
+        let index = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+
+        if self.flag_nz() {
+            self.pc = self.pc.wrapping_add(index as u16);
+        }
+
+        Ok(())
+    }
+
+    pub fn jr_8_z(&mut self) -> Result<()> {
+        let index = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+
+        if self.flag_z() {
+            self.pc = self.pc.wrapping_add(index as u16);
+        }
+
+        Ok(())
+    }
+
+    pub fn jr_8_nc(&mut self) -> Result<()> {
+        let index = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+
+        if self.flag_nc() {
+            self.pc = self.pc.wrapping_add(index as u16);
+        }
+
+        Ok(())
+    }
+
+    pub fn jr_8_c(&mut self) -> Result<()> {
+        let index = self.bus.read(self.pc)?;
+        self.pc = self.pc.wrapping_add(1);
+
+        if self.flag_c() {
+            self.pc = self.pc.wrapping_add(index as u16);
+        }
+
+        Ok(())
+    }
+
+    pub fn call_16(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+        self.bus.write_word(self.sp, self.pc)?;
+        self.sp = self.sp.wrapping_sub(2);
+        self.pc = addr;
+
+        Ok(())
+    }
+
+    pub fn call_16_nz(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+
+        if self.flag_nz() {
+            self.bus.write_word(self.sp, self.pc)?;
+            self.sp = self.sp.wrapping_sub(2);
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn call_16_z(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+
+        if self.flag_z() {
+            self.bus.write_word(self.sp, self.pc)?;
+            self.sp = self.sp.wrapping_sub(2);
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn call_16_nc(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+
+        if self.flag_nc() {
+            self.bus.write_word(self.sp, self.pc)?;
+            self.sp = self.sp.wrapping_sub(2);
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn call_16_c(&mut self) -> Result<()> {
+        let addr = self.bus.read_word(self.pc)?;
+        self.pc = self.pc.wrapping_add(2);
+
+        if self.flag_c() {
+            self.bus.write_word(self.sp, self.pc)?;
+            self.sp = self.sp.wrapping_sub(2);
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn restart(&mut self, param: u8) -> Result<()> {
+        let addr = param as u16;
+        self.bus.write_word(self.sp, self.pc)?;
+        self.sp = self.sp.wrapping_sub(2);
+        self.pc = addr;
+
+        Ok(())
+    }
+
+    pub fn ret(&mut self) -> Result<()> {
+        self.sp = self.sp.wrapping_sub(2);
+        let addr = self.bus.read_word(self.sp)?;
+        self.pc = addr;
+
+        Ok(())
+    }
+
+    pub fn ret_nz(&mut self) -> Result<()> {
+        if self.flag_nz() {
+            self.sp = self.sp.wrapping_sub(2);
+            let addr = self.bus.read_word(self.sp)?;
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn ret_z(&mut self) -> Result<()> {
+        if self.flag_z() {
+            self.sp = self.sp.wrapping_sub(2);
+            let addr = self.bus.read_word(self.sp)?;
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn ret_nc(&mut self) -> Result<()> {
+        if self.flag_nc() {
+            self.sp = self.sp.wrapping_sub(2);
+            let addr = self.bus.read_word(self.sp)?;
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn ret_c(&mut self) -> Result<()> {
+        if self.flag_c() {
+            self.sp = self.sp.wrapping_sub(2);
+            let addr = self.bus.read_word(self.sp)?;
+            self.pc = addr;
+        }
+
+        Ok(())
+    }
+
+    pub fn reti(&mut self) -> Result<()> {
+        self.sp = self.sp.wrapping_sub(2);
+        let addr = self.bus.read_word(self.sp)?;
+        self.pc = addr;
+
+        unimplemented!("割り込みを再開");
+
+        Ok(())
+    }
+
+    pub fn swap_8_r(&mut self, index: u8) -> Result<()> {
+        let val = self.r8(index)?;
+        let high = val & 0xF0;
+        let low = val & 0x0F;
+        let result = (high >> 4) | (low << 4);
+
+        self.set_r8(index, result)?;
+
+        self.set_flag_z(result == 0);
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(false);
+
+        Ok(())
+    }
+
+    pub fn decimal_adjust_8_a(&mut self) -> Result<()> {
+        let val = self.a();
+
+        unimplemented!("BCDに変換");
+
+        let result = val;
+        let c = false;
+
+        self.set_a(result);
+
+        self.set_flag_z(result == 0);
+        self.set_flag_h(false);
+        self.set_flag_c(c);
+
+        Ok(())
+    }
+
+    pub fn complement_8_a(&mut self) -> Result<()> {
+        let val = self.a();
+        let result = !val;
+
+        self.set_a(result);
+        self.set_flag_n(true);
+        self.set_flag_h(true);
+
+        Ok(())
+    }
+
+    pub fn complement_carry(&mut self) -> Result<()> {
+        let c = self.flag_c();
+        let result = !c;
+
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(result);
+
+        Ok(())
+    }
+
+    pub fn set_carry_flag(&mut self) -> Result<()> {
+        self.set_flag_n(false);
+        self.set_flag_h(false);
+        self.set_flag_c(true);
+
+        Ok(())
+    }
 }

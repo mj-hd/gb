@@ -29,16 +29,31 @@ impl Bus {
     pub fn read(&self, addr: u16) -> Result<u8> {
         match addr {
             0x0000..=0x7FFF => self.mbc.read_rom(addr),
-            // 0x8000..=0x9FFF => self.ppu.read(addr - 0x8000),
+            0x8000..=0x9FFF => {
+                // TODO PPUの実装
+                // Ok(self.ppu.read(addr - 0x8000))
+                Ok(0)
+            }
             0xA000..=0xBFFF => self.mbc.read_ram(addr - 0xA000),
             0xC000..=0xDFFF => Ok(self.ram[(addr - 0xC000) as usize]),
             0xE000..=0xFDFF => Ok(self.ram[(addr - 0xE000) as usize]),
-            // 0xFE00..=0xFE9F => Ok(self.ppu.read_oam(addr - 0xFE00)),
+            0xFE00..=0xFE9F => {
+                // TODO OAMの実装
+                // Ok(self.ppu.read_oam(addr - 0xFE00));
+                Ok(0)
+            }
             0xFEA0..=0xFEFF => Ok(0),
-            // 0xFF00..=0xFF7F => Ok(self.io.read(addr - 0xFF00)),
+            0xFF00..=0xFF7F => {
+                // TODO IOポートの実装
+                // Ok(self.io.read(addr - 0xFF00))
+                Ok(0)
+            }
             0xFF80..=0xFFFE => Ok(self.hram[(addr - 0xFF80) as usize]),
-            // 0xFFFF => self.interrupt
-            _ => bail!("read address range exceeded {:#X}", addr),
+            0xFFFF => {
+                // TODO 割り込みの実装
+                // Ok(self.interrupt)
+                Ok(0)
+            }
         }
     }
 
@@ -52,7 +67,11 @@ impl Bus {
     pub fn write(&mut self, addr: u16, val: u8) -> Result<()> {
         match addr {
             0x0000..=0x7FFF => self.mbc.write_rom(addr, val),
-            // 0x8000..=0x9FFF => self.ppu.read(addr - 0x8000),
+            0x8000..=0x9FFF => {
+                // TODO PPUの実装
+                // self.ppu.read(addr - 0x8000);
+                Ok(())
+            }
             0xA000..=0xBFFF => self.mbc.write_ram(addr - 0xA000, val),
             0xC000..=0xDFFF => {
                 self.ram[(addr - 0xC000) as usize] = val;
@@ -62,15 +81,26 @@ impl Bus {
                 self.ram[(addr - 0xE000) as usize] = val;
                 Ok(())
             }
-            // 0xFE00..=0xFE9F => self.ppu.write_oam(addr - 0xFE00),
+            0xFE00..=0xFE9F => {
+                // TODO OAMの実装
+                // self.ppu.write_oam(addr - 0xFE00);
+                Ok(())
+            }
             0xFEA0..=0xFEFF => Ok(()),
-            // 0xFF00..=0xFF7F => self.io.write(addr - 0xFF00, val),
+            0xFF00..=0xFF7F => {
+                // TODO IOポートの実装
+                // self.io.write(addr - 0xFF00, val);
+                Ok(())
+            }
             0xFF80..=0xFFFE => {
                 self.hram[(addr - 0xFF80) as usize] = val;
                 Ok(())
             }
-            // 0xFFFF => { self.interrupt = val },
-            _ => bail!("write address range exceeded {:#X} = {:#X}", addr, val),
+            0xFFFF => {
+                // TODO 割り込みの実装
+                // self.interrupt = val;
+                Ok(())
+            }
         }
     }
 
