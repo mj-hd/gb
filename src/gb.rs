@@ -1,8 +1,10 @@
 use crate::bus::Bus;
 use crate::cpu::Cpu;
 use crate::mbc::RomOnly;
+use crate::ppu::Ppu;
 use crate::rom::Rom;
 use anyhow::Result;
+use gl::types::*;
 
 pub struct Gb {
     cpu: Cpu,
@@ -11,7 +13,8 @@ pub struct Gb {
 impl Gb {
     pub fn new(rom: Rom) -> Self {
         let mbc = Box::new(RomOnly::new(rom));
-        let bus = Bus::new(mbc);
+        let ppu = Ppu::new();
+        let bus = Bus::new(ppu, mbc);
         let cpu = Cpu::new(bus);
 
         Gb { cpu }
@@ -25,5 +28,9 @@ impl Gb {
         self.cpu.tick()?;
 
         Ok(())
+    }
+
+    pub fn render(&mut self) -> Result<()> {
+        self.cpu.bus.ppu.render()
     }
 }

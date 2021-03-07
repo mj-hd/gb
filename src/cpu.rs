@@ -13,7 +13,7 @@ pub struct Cpu {
 
     stalls: u8,
 
-    bus: Bus,
+    pub bus: Bus,
 }
 
 impl Cpu {
@@ -223,7 +223,7 @@ impl Cpu {
             1 => Ok(self.de),
             2 => Ok(self.hl),
             3 => Ok(self.sp),
-            _ => bail!("unknown r8 {}", index),
+            _ => bail!("unknown r16 {}", index),
         }
     }
 
@@ -245,7 +245,7 @@ impl Cpu {
                 self.sp = val;
                 Ok(())
             }
-            _ => bail!("unknown r8 {}", index),
+            _ => bail!("unknown r16 {}", index),
         }
     }
 
@@ -515,7 +515,7 @@ impl Cpu {
             // CB Prefixed Instructions
             "11001011" => {
                 let prefixed = self.bus.read(self.pc)?;
-                self.pc += self.pc.wrapping_add(1);
+                self.pc = self.pc.wrapping_add(1);
                 self.do_mnemonic_prefixed(prefixed)
             }
             _ => bail!("unimplemented opecode {:?}", opecode),

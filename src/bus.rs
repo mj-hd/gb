@@ -1,8 +1,9 @@
 use crate::mbc::Mbc;
-use anyhow::{bail, Result};
+use crate::ppu::Ppu;
+use anyhow::Result;
 
 pub struct Bus {
-    // ppu: Ppu,
+    pub ppu: Ppu,
     // apu: Apu,
     ram: [u8; 0x8000],
     hram: [u8; 0x0080],
@@ -11,16 +12,17 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(mbc: Box<dyn Mbc>) -> Self {
+    pub fn new(ppu: Ppu, mbc: Box<dyn Mbc>) -> Self {
         Bus {
             ram: [0; 0x8000],
             hram: [0; 0x0080],
+            ppu,
             mbc,
         }
     }
 
     pub fn tick(&mut self) -> Result<()> {
-        // self.ppu.tick()?;
+        self.ppu.tick()?;
         // self.apu.tick()?;
 
         Ok(())
@@ -29,19 +31,11 @@ impl Bus {
     pub fn read(&self, addr: u16) -> Result<u8> {
         match addr {
             0x0000..=0x7FFF => self.mbc.read_rom(addr),
-            0x8000..=0x9FFF => {
-                // TODO PPUの実装
-                // Ok(self.ppu.read(addr - 0x8000))
-                Ok(0)
-            }
+            0x8000..=0x9FFF => self.ppu.read(addr - 0x8000),
             0xA000..=0xBFFF => self.mbc.read_ram(addr - 0xA000),
             0xC000..=0xDFFF => Ok(self.ram[(addr - 0xC000) as usize]),
             0xE000..=0xFDFF => Ok(self.ram[(addr - 0xE000) as usize]),
-            0xFE00..=0xFE9F => {
-                // TODO OAMの実装
-                // Ok(self.ppu.read_oam(addr - 0xFE00));
-                Ok(0)
-            }
+            0xFE00..=0xFE9F => self.ppu.read_oam(addr - 0xFE00),
             0xFEA0..=0xFEFF => Ok(0),
             0xFF00..=0xFF7F => {
                 // TODO IOポートの実装
@@ -67,11 +61,7 @@ impl Bus {
     pub fn write(&mut self, addr: u16, val: u8) -> Result<()> {
         match addr {
             0x0000..=0x7FFF => self.mbc.write_rom(addr, val),
-            0x8000..=0x9FFF => {
-                // TODO PPUの実装
-                // self.ppu.read(addr - 0x8000);
-                Ok(())
-            }
+            0x8000..=0x9FFF => self.ppu.write(addr - 0x8000, val),
             0xA000..=0xBFFF => self.mbc.write_ram(addr - 0xA000, val),
             0xC000..=0xDFFF => {
                 self.ram[(addr - 0xC000) as usize] = val;
@@ -81,11 +71,7 @@ impl Bus {
                 self.ram[(addr - 0xE000) as usize] = val;
                 Ok(())
             }
-            0xFE00..=0xFE9F => {
-                // TODO OAMの実装
-                // self.ppu.write_oam(addr - 0xFE00);
-                Ok(())
-            }
+            0xFE00..=0xFE9F => self.ppu.write_oam(addr - 0xFE00, val),
             0xFEA0..=0xFEFF => Ok(()),
             0xFF00..=0xFF7F => {
                 // TODO IOポートの実装
