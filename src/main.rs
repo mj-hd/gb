@@ -1,33 +1,30 @@
 use gb::gb::Gb;
 use gb::rom::Rom;
-use glfw::Context;
+use pixels::{Pixels, SurfaceTexture};
 use std::fs::File;
 use std::io::BufReader;
-use std::thread::sleep;
 use std::time::{Duration, Instant};
+use winit::dpi::LogicalSize;
+use winit::event::{Event, VirtualKeyCode, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::WindowBuilder;
+use winit_input_helper::WinitInputHelper;
 
 fn main() {
-    let mut fw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
+    let event_loop = EventLoop::new();
+    let mut input = WinitInputHelper::new();
 
-    fw.window_hint(glfw::WindowHint::ContextVersion(3, 2));
-    fw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
-    fw.window_hint(glfw::WindowHint::OpenGlProfile(
-        glfw::OpenGlProfileHint::Core,
-    ));
-    fw.window_hint(glfw::WindowHint::Resizable(true));
-
-    let (mut window, events) = fw
-        .create_window(160 * 2, 144 * 2, &"gb", glfw::WindowMode::Windowed)
+    let size = LogicalSize::new(160, 144);
+    let window = WindowBuilder::new()
+        .with_title("gb")
+        .with_inner_size(size)
+        .with_min_inner_size(size)
+        .build(&event_loop)
         .unwrap();
 
-    window.make_current();
-    window.set_key_polling(true);
-
-    unsafe {
-        gl::load_with(|s| window.get_proc_address(s));
-
-        gl::Enable(gl::TEXTURE_2D);
-    }
+    let window_size = window.inner_size();
+    let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
+    let mut pixels = Pixels::new(160, 144, surface_texture).unwrap();
 
     let mut reader = BufReader::new(File::open("roms/cpu_instrs.gb").unwrap());
     let rom = Rom::new(&mut reader).unwrap();
@@ -36,30 +33,47 @@ fn main() {
 
     gb.reset().unwrap();
 
-    let mut prev_time = Instant::now();
+    let mut time = Instant::now();
 
-    while !window.should_close() {
+    event_loop.run(move |event, _, control_flow| {
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::RedrawRequested(_) => {
+                gb.render(pixels.get_frame()).unwrap();
+                pixels.render().unwrap();
+            }
+            _ => {}
+        }
+
         gb.tick().unwrap();
 
-        if prev_time.elapsed() >= Duration::from_millis(1000 / 60) {
-            gb.render().unwrap();
-            prev_time = Instant::now();
+        match *control_flow {
+            ControlFlow::Exit => {}
+            _ => {
+                if time.elapsed() >= Duration::from_millis(1000 / 60) {
+                    time = Instant::now();
 
-            window.swap_buffers();
-        }
-
-        fw.poll_events();
-
-        for (_, event) in glfw::flush_messages(&events) {
-            match event {
-                glfw::WindowEvent::Key(glfw::Key::Escape, _, glfw::Action::Press, _) => {
-                    window.set_should_close(true)
+                    window.request_redraw();
                 }
-                _ => {}
+
+                if input.update(&event) {
+                    if input.key_pressed(VirtualKeyCode::Escape) || input.quit() {
+                        *control_flow = ControlFlow::Exit;
+                        return;
+                    }
+
+                    if let Some(size) = input.window_resized() {
+                        pixels.resize(size.width, size.height);
+                    }
+                }
+
+                *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_micros(100));
             }
         }
-
-        // TODO 一旦100μs
-        sleep(Duration::from_micros(100));
-    }
+    });
 }

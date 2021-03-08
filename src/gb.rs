@@ -4,7 +4,6 @@ use crate::mbc::RomOnly;
 use crate::ppu::Ppu;
 use crate::rom::Rom;
 use anyhow::Result;
-use gl::types::*;
 
 pub struct Gb {
     cpu: Cpu,
@@ -30,7 +29,7 @@ impl Gb {
         Ok(())
     }
 
-    pub fn render(&mut self) -> Result<()> {
-        self.cpu.bus.ppu.render()
+    pub fn render(&mut self, frame: &mut [u8]) -> Result<()> {
+        self.cpu.bus.ppu.render(frame)
     }
 }
