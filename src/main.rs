@@ -26,8 +26,10 @@ fn main() {
     let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
     let mut pixels = Pixels::new(160, 144, surface_texture).unwrap();
 
-    let mut reader = BufReader::new(File::open("roms/cpu_instrs.gb").unwrap());
+    let mut reader = BufReader::new(File::open("roms/hello-world.gb").unwrap());
     let rom = Rom::new(&mut reader).unwrap();
+
+    println!("rom loaded {:?}", rom);
 
     let mut gb = Gb::new(rom);
 
@@ -72,7 +74,8 @@ fn main() {
                     }
                 }
 
-                *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_micros(100));
+                // *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_micros(1));
+                *control_flow = ControlFlow::Poll;
             }
         }
     });
