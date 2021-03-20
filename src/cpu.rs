@@ -1,4 +1,5 @@
 use crate::bus::Bus;
+use crate::debugger::Debugger;
 use anyhow::{bail, Result};
 use bitfield::bitfield;
 use bitmatch::bitmatch;
@@ -25,11 +26,13 @@ pub struct Cpu {
 
     stalls: u8,
 
+    debugger: Debugger,
+
     pub bus: Bus,
 }
 
 impl Cpu {
-    pub fn new(bus: Bus) -> Self {
+    pub fn new(bus: Bus, debugger: Debugger) -> Self {
         Cpu {
             a: Default::default(),
             f: F::default(),
@@ -39,6 +42,7 @@ impl Cpu {
             sp: Default::default(),
             pc: Default::default(),
             stalls: Default::default(),
+            debugger,
             bus,
         }
     }
@@ -103,6 +107,10 @@ impl Cpu {
             "PC: {:#X}, DATA: {:#X}, A: {:#X}, FLAGS: {:?}",
             self.pc, opecode, self.a, self.f,
         );
+
+        if self.debugger.step_run || self.debugger.breakpoints.contains(&self.pc) {
+            self.debugger.step_run = (self.debugger.on_step)();
+        }
 
         self.pc = self.pc.wrapping_add(1);
 
