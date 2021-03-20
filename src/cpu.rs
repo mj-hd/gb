@@ -103,18 +103,24 @@ impl Cpu {
 
         let opecode = self.bus.read(self.pc)?;
 
-        println!(
-            "PC: {:#X}, DATA: {:#X}, A: {:#X}, FLAGS: {:?}",
-            self.pc, opecode, self.a, self.f,
-        );
+        let debug = self.debugger.step_run || self.debugger.breakpoints.contains(&self.pc);
 
-        if self.debugger.step_run || self.debugger.breakpoints.contains(&self.pc) {
+        if debug {
+            println!(
+                "PC: {:#04X}, OPECODE: {:#02X}, A: {:#02X}, BC: {:#04X}, DE: {:#04X}, HL: {:#04X}, SP: {:#04X} FLAGS: {:?}",
+                self.pc, opecode, self.a, self.bc, self.de, self.hl, self.sp, self.f,
+            );
+
             self.debugger.step_run = (self.debugger.on_step)();
         }
 
         self.pc = self.pc.wrapping_add(1);
 
-        self.do_mnemonic(opecode)?;
+        let mnemonic = self.do_mnemonic(opecode)?;
+
+        if debug {
+            println!("{}", mnemonic);
+        }
 
         self.bus.tick()?;
 
@@ -189,6 +195,20 @@ impl Cpu {
         }
     }
 
+    fn r8_str(&self, index: u8) -> String {
+        match index {
+            0 => "B".to_string(),
+            1 => "C".to_string(),
+            2 => "D".to_string(),
+            3 => "E".to_string(),
+            4 => "H".to_string(),
+            5 => "L".to_string(),
+            6 => format!("{:#04X}", self.hl),
+            7 => "A".to_string(),
+            _ => "?".to_string(),
+        }
+    }
+
     fn set_r8(&mut self, index: u8, val: u8) -> Result<()> {
         match index {
             0 => {
@@ -231,6 +251,16 @@ impl Cpu {
             2 => Ok(self.hl),
             3 => Ok(self.sp),
             _ => bail!("unknown r16 {}", index),
+        }
+    }
+
+    fn r16_str(&self, index: u8) -> String {
+        match index {
+            0 => "BC".to_string(),
+            1 => "DE".to_string(),
+            2 => "HL".to_string(),
+            3 => "SP".to_string(),
+            _ => "??".to_string(),
         }
     }
 
@@ -323,7 +353,7 @@ impl Cpu {
     }
 
     #[bitmatch]
-    fn do_mnemonic(&mut self, opecode: u8) -> Result<()> {
+    fn do_mnemonic(&mut self, opecode: u8) -> Result<String> {
         #[bitmatch]
         match &opecode {
             // NOP
@@ -490,7 +520,7 @@ impl Cpu {
     }
 
     #[bitmatch]
-    fn do_mnemonic_prefixed(&mut self, opecode: u8) -> Result<()> {
+    fn do_mnemonic_prefixed(&mut self, opecode: u8) -> Result<String> {
         #[bitmatch]
         match &opecode {
             // SWAP r
@@ -527,191 +557,245 @@ impl Cpu {
         }
     }
 
-    pub fn nop(&self) -> Result<()> {
-        Ok(())
+    pub fn nop(&self) -> Result<String> {
+        Ok("NOP".to_string())
     }
 
-    pub fn halt(&mut self) -> Result<()> {
+    pub fn halt(&mut self) -> Result<String> {
         // unimplemented!("停止する");
 
-        Ok(())
+        Ok("HALT".to_string())
     }
 
-    pub fn stop(&mut self) -> Result<()> {
+    pub fn stop(&mut self) -> Result<String> {
         // unimplemented!("停止して、LCDそのまま");
 
-        Ok(())
+        Ok("STOP".to_string())
     }
 
-    pub fn di(&mut self) -> Result<()> {
+    pub fn di(&mut self) -> Result<String> {
         // unimplemented!("直後の命令実行後に割り込み中止");
 
-        Ok(())
+        Ok("DI".to_string())
     }
 
-    pub fn ei(&mut self) -> Result<()> {
+    pub fn ei(&mut self) -> Result<String> {
         // unimplemented!("直後の命令実行後に割り込み再開");
 
-        Ok(())
+        Ok("EI".to_string())
     }
 
-    pub fn load_8_r_im8(&mut self, index: u8) -> Result<()> {
+    pub fn load_8_r_im8(&mut self, index: u8) -> Result<String> {
         let val = self.bus.read(self.pc)?;
 
         self.pc = self.pc.wrapping_add(1);
 
         self.set_r8(index, val)?;
 
-        Ok(())
+        Ok(format!("LD {}, n: n={:02X}", self.r8_str(index), val))
     }
 
-    pub fn load_8_r_r(&mut self, left: u8, right: u8) -> Result<()> {
+    pub fn load_8_r_r(&mut self, left: u8, right: u8) -> Result<String> {
         let val = self.r8(right)?;
         self.set_r8(left, val)?;
 
-        println!("LD r({}), r({}), r({})={}", left, right, left, val);
-
-        Ok(())
+        Ok(format!(
+            "LD {}, {}: {}={:02X}",
+            self.r8_str(left),
+            self.r8_str(right),
+            self.r8_str(left),
+            val
+        ))
     }
 
-    pub fn load_8_a_addr_bc(&mut self) -> Result<()> {
+    pub fn load_8_a_addr_bc(&mut self) -> Result<String> {
         let val = self.bus.read(self.bc)?;
         self.a = val;
 
-        Ok(())
+        Ok(format!("LD A, (BC): (BC)=({:04X})={:02X}", self.bc, val))
     }
 
-    pub fn load_8_a_addr_de(&mut self) -> Result<()> {
+    pub fn load_8_a_addr_de(&mut self) -> Result<String> {
         let val = self.bus.read(self.de)?;
         self.a = val;
 
-        println!("LD A, (DE), A=({:02X}:{:02X})", self.de, val);
-
-        Ok(())
+        Ok(format!("LD A, (DE): (DE)=({:04X})={:04X}", self.de, val))
     }
 
-    pub fn load_8_addr_bc_a(&mut self) -> Result<()> {
-        self.bus.write(self.bc, self.a)
+    pub fn load_8_addr_bc_a(&mut self) -> Result<String> {
+        self.bus.write(self.bc, self.a)?;
+
+        Ok(format!(
+            "LD (BC), A: (BC)=({:04X}), A={:02X}",
+            self.bc, self.a
+        ))
     }
 
-    pub fn load_8_addr_de_a(&mut self) -> Result<()> {
-        self.bus.write(self.de, self.a)
+    pub fn load_8_addr_de_a(&mut self) -> Result<String> {
+        self.bus.write(self.de, self.a)?;
+
+        Ok(format!(
+            "LD (DE), A: (DE)=({:04X}), A={:02X}",
+            self.de, self.a
+        ))
     }
 
-    pub fn load_8_a_addr_im16(&mut self) -> Result<()> {
+    pub fn load_8_a_addr_im16(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
         let val = self.bus.read(addr)?;
         self.a = val;
 
-        Ok(())
+        Ok(format!("LD A, (nn): (nn)=({:04X})={:02X}", addr, val,))
     }
 
-    pub fn load_8_addr_im16_a(&mut self) -> Result<()> {
+    pub fn load_8_addr_im16_a(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
         let val = self.bus.read(addr)?;
-        self.bus.write(addr, val)
+        self.bus.write(addr, val)?;
+
+        Ok(format!("LD (nn), A: (nn)=({:04X}), A={:02X}", addr, val))
     }
 
-    pub fn load_8_a_addr_index_c(&mut self) -> Result<()> {
-        let val = self.bus.read(0xFF00 + self.c() as u16)?;
+    pub fn load_8_a_addr_index_c(&mut self) -> Result<String> {
+        let index = self.c();
+        let addr = 0xFF00 + index as u16;
+        let val = self.bus.read(addr)?;
         self.a = val;
 
-        Ok(())
+        Ok(format!(
+            "LDH A, (C): (C)=({:02X})=({:04X})={:02X}",
+            index, addr, val
+        ))
     }
 
-    pub fn load_8_addr_index_c_a(&mut self) -> Result<()> {
-        self.bus.write(0xFF00 + self.c() as u16, self.a)
+    pub fn load_8_addr_index_c_a(&mut self) -> Result<String> {
+        let index = self.c();
+        let addr = 0xFF00 + index as u16;
+        self.bus.write(addr, self.a)?;
+
+        Ok(format!(
+            "LDH (C), A: (C)=({:02X})=({:04X})={:02X}",
+            index, addr, self.a
+        ))
     }
 
-    pub fn load_8_a_addr_index_im8(&mut self) -> Result<()> {
+    pub fn load_8_a_addr_index_im8(&mut self) -> Result<String> {
         let index = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
-        let val = self.bus.read(0xFF00 + index as u16)?;
+        let addr = 0xFF00 + index as u16;
+        let val = self.bus.read(addr)?;
         self.a = val;
 
-        println!("LDH A, (n=0xFF00+{:02X}), A={:02X}", index, val);
-
-        Ok(())
+        Ok(format!(
+            "LDH A, (n): (n)=({:02X})=({:04X})={:02X}",
+            index, addr, val
+        ))
     }
 
-    pub fn load_8_addr_index_im8_a(&mut self) -> Result<()> {
+    pub fn load_8_addr_index_im8_a(&mut self) -> Result<String> {
         let index = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
-        self.bus.write(0xFF00 + index as u16, self.a)
+        let addr = 0xFF00 + index as u16;
+        self.bus.write(addr, self.a)?;
+
+        Ok(format!(
+            "LDH (n), A: (n)=({:02X})=({:04X}), A={:02X}",
+            index, addr, self.a,
+        ))
     }
 
-    pub fn load_dec_8_a_addr_hl(&mut self) -> Result<()> {
+    pub fn load_dec_8_a_addr_hl(&mut self) -> Result<String> {
         let val = self.bus.read(self.hl)?;
         self.hl = self.hl.wrapping_sub(1);
         self.a = val;
 
-        Ok(())
+        Ok(format!(
+            "LD A, (HL-): (HL)=({:04X})={:02X}, (HL-)=({:04X})",
+            self.hl.wrapping_add(1),
+            val,
+            self.hl
+        ))
     }
 
-    pub fn load_dec_8_addr_hl_a(&mut self) -> Result<()> {
+    pub fn load_dec_8_addr_hl_a(&mut self) -> Result<String> {
         self.bus.write(self.hl, self.a)?;
         self.hl = self.hl.wrapping_sub(1);
 
-        Ok(())
+        Ok(format!(
+            "LD (HL-), A: (HL)=({:04X}), (HL-)=({:04X}), A={:02X}",
+            self.hl.wrapping_add(1),
+            self.hl,
+            self.a,
+        ))
     }
 
-    pub fn load_inc_8_a_addr_hl(&mut self) -> Result<()> {
+    pub fn load_inc_8_a_addr_hl(&mut self) -> Result<String> {
         let val = self.bus.read(self.hl)?;
         self.hl = self.hl.wrapping_add(1);
         self.a = val;
 
-        Ok(())
+        Ok(format!(
+            "LD A, (HL+): (HL)=({:04X})={:02X}, (HL+)=({:04X})",
+            self.hl.wrapping_sub(1),
+            val,
+            self.hl,
+        ))
     }
 
-    pub fn load_inc_8_addr_hl_a(&mut self) -> Result<()> {
-        println!("LD (HL+), A, ({:02X})={:02X}", self.hl, self.a);
-
+    pub fn load_inc_8_addr_hl_a(&mut self) -> Result<String> {
         self.bus.write(self.hl, self.a)?;
         self.hl = self.hl.wrapping_add(1);
 
-        Ok(())
+        Ok(format!(
+            "LD (HL+), A: (HL)=({:04X}), (HL+)=({:04X}), A={:02X}",
+            self.hl.wrapping_sub(1),
+            self.hl,
+            self.a
+        ))
     }
 
-    pub fn load_16_rr_im16(&mut self, index: u8) -> Result<()> {
+    pub fn load_16_rr_im16(&mut self, index: u8) -> Result<String> {
         let val = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
-        self.set_r16(index, val)
+        self.set_r16(index, val)?;
+
+        Ok(format!("LD {}, nn: nn={:04X}", self.r16_str(index), val,))
     }
 
-    pub fn load_16_addr_im16_sp(&mut self) -> Result<()> {
+    pub fn load_16_addr_im16_sp(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
         let val = self.bus.read_word(addr)?;
         self.sp = val;
 
-        Ok(())
+        Ok(format!("LD (nn), sp: (nn)=({:04X}), SP={:04X}", addr, val))
     }
 
-    pub fn load_16_sp_hl(&mut self) -> Result<()> {
+    pub fn load_16_sp_hl(&mut self) -> Result<String> {
         self.sp = self.hl;
 
-        Ok(())
+        Ok(format!("LD SP, HL: HL={:04X}", self.hl))
     }
 
-    pub fn push_16_rr(&mut self, index: u8) -> Result<()> {
+    pub fn push_16_rr(&mut self, index: u8) -> Result<String> {
         let val = self.r16(index)?;
         self.bus.write_word(self.sp, val)?;
         self.sp = self.sp.wrapping_sub(2);
 
-        Ok(())
+        Ok(format!("PUSH {}: {0}={:04X}", self.r16_str(index), val))
     }
 
-    pub fn pop_16_rr(&mut self, index: u8) -> Result<()> {
+    pub fn pop_16_rr(&mut self, index: u8) -> Result<String> {
         self.sp = self.sp.wrapping_add(2);
         let val = self.bus.read_word(self.sp)?;
         self.set_r16(index, val)?;
 
-        Ok(())
+        Ok(format!("POP {}: data={:04X}", self.r16_str(index), val))
     }
 
-    pub fn add_8_a_r(&mut self, index: u8) -> Result<()> {
+    pub fn add_8_a_r(&mut self, index: u8) -> Result<String> {
         let left = self.a;
         let right = self.r8(index)?;
         let result = left.wrapping_add(right);
@@ -723,10 +807,15 @@ impl Cpu {
         self.f.set_h(self.half_carry_positive(result, left, right));
         self.f.set_c(self.carry_positive(result, left, right));
 
-        Ok(())
+        Ok(format!(
+            "ADD A, {}: A={:02X}, {0}={:02X}",
+            self.r8_str(index),
+            left,
+            right
+        ))
     }
 
-    pub fn add_8_a_im8(&mut self) -> Result<()> {
+    pub fn add_8_a_im8(&mut self) -> Result<String> {
         let right = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
         let left = self.a;
@@ -739,10 +828,10 @@ impl Cpu {
         self.f.set_h(self.half_carry_positive(result, left, right));
         self.f.set_c(self.carry_positive(result, left, right));
 
-        Ok(())
+        Ok(format!("ADD A, n: A={:02X}, n={:02X}", left, right))
     }
 
-    pub fn add_carry_8_a_r(&mut self, index: u8) -> Result<()> {
+    pub fn add_carry_8_a_r(&mut self, index: u8) -> Result<String> {
         let c = self.f.c() as u8;
         let right = self.r8(index)?;
         let left = self.a;
@@ -761,10 +850,15 @@ impl Cpu {
         self.f.set_h(h1 || h2);
         self.f.set_c(c1 || c2);
 
-        Ok(())
+        Ok(format!(
+            "ADC A, {}: A={:02X}, {0}={:02X}",
+            self.r8_str(index),
+            left,
+            right,
+        ))
     }
 
-    pub fn add_carry_8_a_im8(&mut self) -> Result<()> {
+    pub fn add_carry_8_a_im8(&mut self) -> Result<String> {
         let c = self.f.c() as u8;
         let right = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
@@ -784,10 +878,10 @@ impl Cpu {
         self.f.set_h(h1 || h2);
         self.f.set_c(c1 || c2);
 
-        Ok(())
+        Ok(format!("ADC A, n: A={:02X}, n={:02X}", left, right,))
     }
 
-    pub fn sub_8_a_r(&mut self, index: u8) -> Result<()> {
+    pub fn sub_8_a_r(&mut self, index: u8) -> Result<String> {
         let left = self.a;
         let right = self.r8(index)?;
         let result = left.wrapping_sub(right);
@@ -799,10 +893,15 @@ impl Cpu {
         self.f.set_h(self.half_carry_negative(result, left, right));
         self.f.set_c(self.carry_negative(result, left, right));
 
-        Ok(())
+        Ok(format!(
+            "SUB A, {}: A={:02X}, {0}={:02X}",
+            self.r8_str(index),
+            left,
+            right
+        ))
     }
 
-    pub fn sub_8_a_im8(&mut self) -> Result<()> {
+    pub fn sub_8_a_im8(&mut self) -> Result<String> {
         let left = self.a;
         let right = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
@@ -815,10 +914,10 @@ impl Cpu {
         self.f.set_h(self.half_carry_negative(result, left, right));
         self.f.set_c(self.carry_negative(result, left, right));
 
-        Ok(())
+        Ok(format!("SUB A, n: A={:02X}, n={:02X}", left, right))
     }
 
-    pub fn sub_carry_8_a_r(&mut self, index: u8) -> Result<()> {
+    pub fn sub_carry_8_a_r(&mut self, index: u8) -> Result<String> {
         let c = self.f.c() as u8;
         let left = self.a;
         let right = self.r8(index)?;
@@ -837,10 +936,15 @@ impl Cpu {
         self.f.set_h(h1 || h2);
         self.f.set_c(c1 || c2);
 
-        Ok(())
+        Ok(format!(
+            "SBC A, {}: A={:02X}, {0}={:02X}",
+            self.r8_str(index),
+            left,
+            right
+        ))
     }
 
-    pub fn sub_carry_8_a_im8(&mut self) -> Result<()> {
+    pub fn sub_carry_8_a_im8(&mut self) -> Result<String> {
         let c = self.f.c() as u8;
         let left = self.a;
         let right = self.bus.read(self.pc)?;
@@ -860,10 +964,10 @@ impl Cpu {
         self.f.set_h(h1 || h2);
         self.f.set_c(c1 || c2);
 
-        Ok(())
+        Ok(format!("SBC A, n: A={:02X}, n={:02X}", left, right))
     }
 
-    pub fn and_8_a_r(&mut self, index: u8) -> Result<()> {
+    pub fn and_8_a_r(&mut self, index: u8) -> Result<String> {
         let left = self.a;
         let right = self.r8(index)?;
         let result = left & right;
@@ -875,10 +979,15 @@ impl Cpu {
         self.f.set_h(true);
         self.f.set_c(false);
 
-        Ok(())
+        Ok(format!(
+            "AND A, {}: A={:02X}, {0}={:02X}",
+            self.r8_str(index),
+            left,
+            right
+        ))
     }
 
-    pub fn and_8_a_im8(&mut self) -> Result<()> {
+    pub fn and_8_a_im8(&mut self) -> Result<String> {
         let left = self.a;
         let right = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
@@ -891,30 +1000,30 @@ impl Cpu {
         self.f.set_h(true);
         self.f.set_c(false);
 
-        Ok(())
+        Ok(format!("AND A, n: A={:02X}, n={:02X}", left, right))
     }
 
-    pub fn or_8_a_r(&mut self, index: u8) -> Result<()> {
+    pub fn or_8_a_r(&mut self, index: u8) -> Result<String> {
         let left = self.a;
         let right = self.r8(index)?;
         let result = left | right;
 
         self.a = result;
 
-        println!(
-            "OR A, r({}), {:02X} | {:02X} = {:02X}",
-            index, left, right, result
-        );
-
         self.f.set_z(result == 0);
         self.f.set_n(false);
         self.f.set_h(false);
         self.f.set_c(false);
 
-        Ok(())
+        Ok(format!(
+            "OR A, {}: A={:02X}, {0}={:02X}",
+            self.r8_str(index),
+            left,
+            right
+        ))
     }
 
-    pub fn or_8_a_im8(&mut self) -> Result<()> {
+    pub fn or_8_a_im8(&mut self) -> Result<String> {
         let left = self.a;
         let right = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
@@ -927,10 +1036,10 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(false);
 
-        Ok(())
+        Ok(format!("OR A, n: A={:02X}, n={:02X}", left, right))
     }
 
-    pub fn xor_8_a_r(&mut self, index: u8) -> Result<()> {
+    pub fn xor_8_a_r(&mut self, index: u8) -> Result<String> {
         let left = self.a;
         let right = self.r8(index)?;
         let result = left ^ right;
@@ -942,10 +1051,15 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(false);
 
-        Ok(())
+        Ok(format!(
+            "XOR A, {}: A={:02X}, {0}={:02X}",
+            self.r8_str(index),
+            left,
+            right
+        ))
     }
 
-    pub fn xor_8_a_im8(&mut self) -> Result<()> {
+    pub fn xor_8_a_im8(&mut self) -> Result<String> {
         let left = self.a;
         let right = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
@@ -958,10 +1072,10 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(false);
 
-        Ok(())
+        Ok(format!("XOR A, n: A={:02X}, n={:02X}", left, right))
     }
 
-    pub fn cp_8_a_r(&mut self, index: u8) -> Result<()> {
+    pub fn cp_8_a_r(&mut self, index: u8) -> Result<String> {
         let left = self.a;
         let right = self.r8(index)?;
         let result = left.wrapping_sub(left);
@@ -971,30 +1085,29 @@ impl Cpu {
         self.f.set_h(self.half_carry_negative(result, left, right));
         self.f.set_c(self.carry_negative(result, left, right));
 
-        Ok(())
+        Ok(format!(
+            "CP A, {}: A={:02X}, {0}={:02X}",
+            self.r8_str(index),
+            left,
+            right
+        ))
     }
 
-    pub fn cp_8_a_im8(&mut self) -> Result<()> {
+    pub fn cp_8_a_im8(&mut self) -> Result<String> {
         let left = self.a;
         let right = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
         let result = left.wrapping_sub(right);
-
-        println!(
-            "CP A, ({:02X}), A-{:02X}={:02X}",
-            self.pc - 1,
-            right,
-            result,
-        );
 
         self.f.set_z(result == 0);
         self.f.set_n(true);
         self.f.set_h(self.half_carry_negative(result, left, right));
         self.f.set_c(self.carry_negative(result, left, right));
 
-        Ok(())
+        Ok(format!("CP A, n: A={:02X}, n={:02X}", left, right))
     }
-    pub fn inc_8_r(&mut self, index: u8) -> Result<()> {
+
+    pub fn inc_8_r(&mut self, index: u8) -> Result<String> {
         let left = self.r8(index)?;
         let right = 1;
         let result = left.wrapping_add(right);
@@ -1006,10 +1119,10 @@ impl Cpu {
         self.f.set_h(self.half_carry_positive(result, left, right));
         self.f.set_c(self.carry_positive(result, left, right));
 
-        Ok(())
+        Ok(format!("INC {}: {0}={:02X}", self.r8_str(index), left))
     }
 
-    pub fn dec_8_r(&mut self, index: u8) -> Result<()> {
+    pub fn dec_8_r(&mut self, index: u8) -> Result<String> {
         let left = self.r8(index)?;
         let right = 1;
         let result = left.wrapping_sub(right);
@@ -1021,10 +1134,10 @@ impl Cpu {
         self.f.set_h(self.half_carry_negative(result, left, right));
         self.f.set_c(self.carry_negative(result, left, right));
 
-        Ok(())
+        Ok(format!("DEC {}: {0}={:02X}", self.r8_str(index), left))
     }
 
-    pub fn add_16_hl_rr(&mut self, index: u8) -> Result<()> {
+    pub fn add_16_hl_rr(&mut self, index: u8) -> Result<String> {
         let left = self.hl;
         let right = self.r16(index)?;
         let result = left.wrapping_add(right);
@@ -1036,10 +1149,15 @@ impl Cpu {
             .set_h(self.half_carry_positive_16(result, left, right));
         self.f.set_c(self.carry_positive_16(result, left, right));
 
-        Ok(())
+        Ok(format!(
+            "ADD HL, {}: HL={:04X}, {0}={:04X}",
+            self.r16_str(index),
+            left,
+            right
+        ))
     }
 
-    pub fn add_16_sp_im8(&mut self) -> Result<()> {
+    pub fn add_16_sp_im8(&mut self) -> Result<String> {
         let left = self.sp;
         let right = self.bus.read(self.pc)? as i8 as u16;
         self.pc = self.pc.wrapping_add(1);
@@ -1053,28 +1171,30 @@ impl Cpu {
             .set_h(self.half_carry_positive_16(result, left, right));
         self.f.set_c(self.carry_positive_16(result, left, right));
 
-        Ok(())
+        Ok(format!("ADD SP, n: SP={:04X}, n={:02X}", left, right))
     }
 
-    pub fn inc_16_rr(&mut self, index: u8) -> Result<()> {
+    pub fn inc_16_rr(&mut self, index: u8) -> Result<String> {
         let left = self.r16(index)?;
         let right = 1;
         let result = left.wrapping_add(right);
 
-        self.set_r16(index, result)
+        self.set_r16(index, result)?;
+
+        Ok(format!("INC {}: {0}={:04X}", self.r16_str(index), left))
     }
 
-    pub fn dec_16_rr(&mut self, index: u8) -> Result<()> {
+    pub fn dec_16_rr(&mut self, index: u8) -> Result<String> {
         let left = self.r16(index)?;
         let right = 1;
         let result = left.wrapping_sub(right);
 
-        println!("DEC rr({}), rr({})-1={:02X}", index, index, result);
+        self.set_r16(index, result)?;
 
-        self.set_r16(index, result)
+        Ok(format!("DEC {}: {0}={:04X}", self.r16_str(index), left))
     }
 
-    pub fn rlca_8(&mut self) -> Result<()> {
+    pub fn rlca_8(&mut self) -> Result<String> {
         let val = self.a;
         let c = (val >> 7) & 1;
         let result = val << 1;
@@ -1086,10 +1206,10 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!("RLCA: A={:02X}, #={:02X}", val, result))
     }
 
-    pub fn rla_8(&mut self) -> Result<()> {
+    pub fn rla_8(&mut self) -> Result<String> {
         let val = self.a;
         let c = (val >> 7) & 1;
         let result = val << 1 | self.f.c() as u8;
@@ -1101,10 +1221,10 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!("RLA: A={:02X}, #={:02X}", val, result))
     }
 
-    pub fn rrca_8(&mut self) -> Result<()> {
+    pub fn rrca_8(&mut self) -> Result<String> {
         let val = self.a;
         let c = val & 1;
         let result = val >> 1;
@@ -1116,10 +1236,10 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!("RRCA: A={:02X}, #={:02X}", val, result))
     }
 
-    pub fn rra_8(&mut self) -> Result<()> {
+    pub fn rra_8(&mut self) -> Result<String> {
         let val = self.a;
         let c = val & 1;
         let result = val >> 1 | ((self.f.c() as u8) << 7);
@@ -1131,10 +1251,10 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!("RRA: A={:02X}, #={:02X}", val, result))
     }
 
-    pub fn rlc_8_r(&mut self, index: u8) -> Result<()> {
+    pub fn rlc_8_r(&mut self, index: u8) -> Result<String> {
         let val = self.r8(index)?;
         let c = (val >> 7) & 1;
         let result = val.rotate_left(1);
@@ -1146,10 +1266,15 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!(
+            "RLC {}: {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            val,
+            result
+        ))
     }
 
-    pub fn rl_8_r(&mut self, index: u8) -> Result<()> {
+    pub fn rl_8_r(&mut self, index: u8) -> Result<String> {
         let val = self.r8(index)?;
         let c = (val >> 7) & 1;
         let result = val << 1 | self.f.c() as u8;
@@ -1161,10 +1286,15 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!(
+            "RL {}: {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            val,
+            result
+        ))
     }
 
-    pub fn rrc_8_r(&mut self, index: u8) -> Result<()> {
+    pub fn rrc_8_r(&mut self, index: u8) -> Result<String> {
         let val = self.r8(index)?;
         let c = val & 1;
         let result = val.rotate_right(1);
@@ -1176,10 +1306,15 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!(
+            "RRC {}: {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            val,
+            result
+        ))
     }
 
-    pub fn rr_8_r(&mut self, index: u8) -> Result<()> {
+    pub fn rr_8_r(&mut self, index: u8) -> Result<String> {
         let val = self.r8(index)?;
         let c = val & 1;
         let result = val >> 1 | ((self.f.c() as u8) << 7);
@@ -1191,10 +1326,15 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!(
+            "RR {}: {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            val,
+            result
+        ))
     }
 
-    pub fn sla_8_r(&mut self, index: u8) -> Result<()> {
+    pub fn sla_8_r(&mut self, index: u8) -> Result<String> {
         let val = self.r8(index)?;
         let c = (val >> 7) & 1;
         let result = val << 1;
@@ -1206,10 +1346,15 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!(
+            "SLA {}: {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            val,
+            result
+        ))
     }
 
-    pub fn sra_8_r(&mut self, index: u8) -> Result<()> {
+    pub fn sra_8_r(&mut self, index: u8) -> Result<String> {
         let val = self.r8(index)?;
         let c = val & 1;
         let result = val >> 1 | (val & 0b10000000);
@@ -1221,10 +1366,15 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!(
+            "SRA {}: {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            val,
+            result
+        ))
     }
 
-    pub fn srl_8_r(&mut self, index: u8) -> Result<()> {
+    pub fn srl_8_r(&mut self, index: u8) -> Result<String> {
         let val = self.r8(index)?;
         let c = val & 1;
         let result = val >> 1;
@@ -1236,10 +1386,15 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
-        Ok(())
+        Ok(format!(
+            "SRL {}: {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            val,
+            result
+        ))
     }
 
-    pub fn bit_8_im_bit_r(&mut self, index: u8) -> Result<()> {
+    pub fn bit_8_im_bit_r(&mut self, index: u8) -> Result<String> {
         let left = self.r8(index)?;
         let right = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
@@ -1249,35 +1404,57 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(true);
 
-        Ok(())
+        Ok(format!(
+            "BIT b, {}: b={}, {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            right,
+            left,
+            result
+        ))
     }
 
-    pub fn set_8_im_bit_r(&mut self, index: u8) -> Result<()> {
+    pub fn set_8_im_bit_r(&mut self, index: u8) -> Result<String> {
         let left = self.r8(index)?;
         let right = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
         let result = left | (1 << right);
 
-        self.set_r8(index, result)
+        self.set_r8(index, result)?;
+
+        Ok(format!(
+            "SET b, {}: b={}, {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            right,
+            left,
+            result
+        ))
     }
 
-    pub fn reset_8_im_bit_r(&mut self, index: u8) -> Result<()> {
+    pub fn reset_8_im_bit_r(&mut self, index: u8) -> Result<String> {
         let left = self.r8(index)?;
         let right = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
         let result = left & !(1 << right);
 
-        self.set_r8(index, result)
+        self.set_r8(index, result)?;
+
+        Ok(format!(
+            "RES b, {}: b={}, {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            right,
+            left,
+            result
+        ))
     }
 
-    pub fn jp_16(&mut self) -> Result<()> {
+    pub fn jp_16(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = addr;
 
-        Ok(())
+        Ok(format!("JP nn: nn={:04X}", addr))
     }
 
-    pub fn jp_16_nz(&mut self) -> Result<()> {
+    pub fn jp_16_nz(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
 
@@ -1285,10 +1462,10 @@ impl Cpu {
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!("JP NZ, nn: NZ={}, nn={:04X}", !self.f.z(), addr))
     }
 
-    pub fn jp_16_z(&mut self) -> Result<()> {
+    pub fn jp_16_z(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
 
@@ -1296,10 +1473,10 @@ impl Cpu {
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!("JP Z, nn: Z={}, nn={:04X}", self.f.z(), addr))
     }
 
-    pub fn jp_16_nc(&mut self) -> Result<()> {
+    pub fn jp_16_nc(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
 
@@ -1307,10 +1484,10 @@ impl Cpu {
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!("JP NC, nn: NC={}, nn={:04X}", !self.f.c(), addr))
     }
 
-    pub fn jp_16_c(&mut self) -> Result<()> {
+    pub fn jp_16_c(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
 
@@ -1318,25 +1495,25 @@ impl Cpu {
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!("JP C, nn: C={}, nn={:04X}", self.f.c(), addr))
     }
 
-    pub fn jp_16_addr_hl(&mut self) -> Result<()> {
+    pub fn jp_16_addr_hl(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.hl)?;
         self.pc = addr;
 
-        Ok(())
+        Ok(format!("JP (HL): (HL)=({:04X})={:04X}", self.hl, addr))
     }
 
-    pub fn jr_8_im_8(&mut self) -> Result<()> {
+    pub fn jr_8_im_8(&mut self) -> Result<String> {
         let index = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
         self.pc = self.pc.wrapping_add(index as i8 as u16);
 
-        Ok(())
+        Ok(format!("JR n: n={}", index))
     }
 
-    pub fn jr_8_nz(&mut self) -> Result<()> {
+    pub fn jr_8_nz(&mut self) -> Result<String> {
         let index = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
 
@@ -1344,17 +1521,10 @@ impl Cpu {
             self.pc = self.pc.wrapping_add(index as i8 as u16);
         }
 
-        println!(
-            "JR NZ, nn, NZ={}, nn=({:02X}), PC={:02X}",
-            !self.f.z(),
-            index,
-            self.pc
-        );
-
-        Ok(())
+        Ok(format!("JR NZ, n: NZ={}, n={}", !self.f.z(), index))
     }
 
-    pub fn jr_8_z(&mut self) -> Result<()> {
+    pub fn jr_8_z(&mut self) -> Result<String> {
         let index = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
 
@@ -1362,10 +1532,10 @@ impl Cpu {
             self.pc = self.pc.wrapping_add(index as i8 as u16);
         }
 
-        Ok(())
+        Ok(format!("JR Z, n: Z={}, n={}", self.f.z(), index))
     }
 
-    pub fn jr_8_nc(&mut self) -> Result<()> {
+    pub fn jr_8_nc(&mut self) -> Result<String> {
         let index = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
 
@@ -1373,10 +1543,10 @@ impl Cpu {
             self.pc = self.pc.wrapping_add(index as i8 as u16);
         }
 
-        Ok(())
+        Ok(format!("JR NC, n: NC={}, n={}", !self.f.c(), index))
     }
 
-    pub fn jr_8_c(&mut self) -> Result<()> {
+    pub fn jr_8_c(&mut self) -> Result<String> {
         let index = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
 
@@ -1384,27 +1554,20 @@ impl Cpu {
             self.pc = self.pc.wrapping_add(index as i8 as u16);
         }
 
-        println!(
-            "JR C, nn, C={}, nn=({:02X}), PC={:02X}",
-            self.f.c(),
-            index,
-            self.pc
-        );
-
-        Ok(())
+        Ok(format!("JR C, n: C={}, n={}", self.f.c(), index))
     }
 
-    pub fn call_16(&mut self) -> Result<()> {
+    pub fn call_16(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
         self.bus.write_word(self.sp, self.pc)?;
         self.sp = self.sp.wrapping_sub(2);
         self.pc = addr;
 
-        Ok(())
+        Ok(format!("CALL nn: nn={:04X}", addr))
     }
 
-    pub fn call_16_nz(&mut self) -> Result<()> {
+    pub fn call_16_nz(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
 
@@ -1414,10 +1577,10 @@ impl Cpu {
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!("CALL NZ, nn: NZ={}, nn={:04X}", !self.f.z(), addr))
     }
 
-    pub fn call_16_z(&mut self) -> Result<()> {
+    pub fn call_16_z(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
 
@@ -1427,10 +1590,10 @@ impl Cpu {
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!("CALL Z, nn: Z={}, nn={:04X}", self.f.z(), addr))
     }
 
-    pub fn call_16_nc(&mut self) -> Result<()> {
+    pub fn call_16_nc(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
 
@@ -1440,10 +1603,10 @@ impl Cpu {
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!("CALL NC, nn: NC={}, nn={:04X}", !self.f.c(), addr))
     }
 
-    pub fn call_16_c(&mut self) -> Result<()> {
+    pub fn call_16_c(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
 
@@ -1453,77 +1616,109 @@ impl Cpu {
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!("CALL C, nn: C={}, nn={:04X}", self.f.c(), addr))
     }
 
-    pub fn restart(&mut self, param: u8) -> Result<()> {
+    pub fn restart(&mut self, param: u8) -> Result<String> {
         let addr = param as u16;
         self.bus.write_word(self.sp, self.pc)?;
         self.sp = self.sp.wrapping_sub(2);
         self.pc = addr;
 
-        Ok(())
+        Ok(format!("RST nn: nn={:04X}", addr))
     }
 
-    pub fn ret(&mut self) -> Result<()> {
+    pub fn ret(&mut self) -> Result<String> {
         self.sp = self.sp.wrapping_sub(2);
         let addr = self.bus.read_word(self.sp)?;
         self.pc = addr;
 
-        Ok(())
+        Ok(format!(
+            "RET: (SP)=({:04X})={:04X}",
+            self.sp.wrapping_add(2),
+            addr
+        ))
     }
 
-    pub fn ret_nz(&mut self) -> Result<()> {
+    pub fn ret_nz(&mut self) -> Result<String> {
+        let addr = self.bus.read_word(self.sp)?;
+
         if !self.f.z() {
             self.sp = self.sp.wrapping_sub(2);
-            let addr = self.bus.read_word(self.sp)?;
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!(
+            "RET NZ: NZ={}, (SP)=({:04X})={:04X}",
+            !self.f.z(),
+            self.sp.wrapping_add(2),
+            addr
+        ))
     }
 
-    pub fn ret_z(&mut self) -> Result<()> {
+    pub fn ret_z(&mut self) -> Result<String> {
+        let addr = self.bus.read_word(self.sp)?;
+
         if self.f.z() {
             self.sp = self.sp.wrapping_sub(2);
-            let addr = self.bus.read_word(self.sp)?;
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!(
+            "RET Z: Z={}, (SP)=({:04X})={:04X}",
+            self.f.z(),
+            self.sp.wrapping_add(2),
+            addr
+        ))
     }
 
-    pub fn ret_nc(&mut self) -> Result<()> {
+    pub fn ret_nc(&mut self) -> Result<String> {
+        let addr = self.bus.read_word(self.sp)?;
+
         if !self.f.c() {
             self.sp = self.sp.wrapping_sub(2);
-            let addr = self.bus.read_word(self.sp)?;
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!(
+            "RET NC: NC={}, (SP)=({:04X})={:04X}",
+            !self.f.c(),
+            self.sp.wrapping_add(2),
+            addr
+        ))
     }
 
-    pub fn ret_c(&mut self) -> Result<()> {
+    pub fn ret_c(&mut self) -> Result<String> {
+        let addr = self.bus.read_word(self.sp)?;
+
         if self.f.c() {
             self.sp = self.sp.wrapping_sub(2);
-            let addr = self.bus.read_word(self.sp)?;
             self.pc = addr;
         }
 
-        Ok(())
+        Ok(format!(
+            "RET C: C={}, (SP)=({:04X})={:04X}",
+            self.f.c(),
+            self.sp.wrapping_add(2),
+            addr
+        ))
     }
 
-    pub fn reti(&mut self) -> Result<()> {
+    pub fn reti(&mut self) -> Result<String> {
         self.sp = self.sp.wrapping_sub(2);
         let addr = self.bus.read_word(self.sp)?;
         self.pc = addr;
 
         unimplemented!("割り込みを再開");
 
-        Ok(())
+        Ok(format!(
+            "RETI: (SP)=({:04X})={:04X}",
+            self.sp.wrapping_add(2),
+            addr
+        ))
     }
 
-    pub fn swap_8_r(&mut self, index: u8) -> Result<()> {
+    pub fn swap_8_r(&mut self, index: u8) -> Result<String> {
         let val = self.r8(index)?;
         let high = val & 0xF0;
         let low = val & 0x0F;
@@ -1536,10 +1731,15 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(false);
 
-        Ok(())
+        Ok(format!(
+            "SWAP {}: {0}={:02X}, #={:02X}",
+            self.r8_str(index),
+            val,
+            result
+        ))
     }
 
-    pub fn decimal_adjust_8_a(&mut self) -> Result<()> {
+    pub fn decimal_adjust_8_a(&mut self) -> Result<String> {
         let val = self.a;
 
         unimplemented!("BCDに変換");
@@ -1553,10 +1753,10 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c);
 
-        Ok(())
+        Ok(format!("DAA: A={:02X}, #={:02X}", val, result))
     }
 
-    pub fn complement_8_a(&mut self) -> Result<()> {
+    pub fn complement_8_a(&mut self) -> Result<String> {
         let val = self.a;
         let result = !val;
 
@@ -1564,10 +1764,10 @@ impl Cpu {
         self.f.set_n(true);
         self.f.set_h(true);
 
-        Ok(())
+        Ok(format!("CPL: A={:02X}, #={:02X}", val, result))
     }
 
-    pub fn complement_carry(&mut self) -> Result<()> {
+    pub fn complement_carry(&mut self) -> Result<String> {
         let c = self.f.c();
         let result = !c;
 
@@ -1575,14 +1775,14 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(result);
 
-        Ok(())
+        Ok(format!("CCF: C={}, #={}", c, result))
     }
 
-    pub fn set_carry_flag(&mut self) -> Result<()> {
+    pub fn set_carry_flag(&mut self) -> Result<String> {
         self.f.set_n(false);
         self.f.set_h(false);
         self.f.set_c(true);
 
-        Ok(())
+        Ok("SCF".to_string())
     }
 }
