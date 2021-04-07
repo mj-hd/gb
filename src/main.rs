@@ -1,12 +1,11 @@
-use gb::debugger::Debugger;
 use gb::gb::Gb;
 use gb::rom::Rom;
 use pixels::{Pixels, SurfaceTexture};
 use rustyline::Editor;
+use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::time::{Duration, Instant};
-use std::u16;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -29,78 +28,14 @@ fn main() {
     let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
     let mut pixels = Pixels::new(160, 144, surface_texture).unwrap();
 
-    let mut rl = Editor::<()>::new();
+    let args = env::args().collect::<Vec<String>>();
 
-    let mut rom = "".to_string();
-    let mut breakpoints = Vec::new();
-
-    loop {
-        let readline = rl.readline(">> ");
-
-        match readline {
-            Ok(line) if line.starts_with("load ") => {
-                if let Some(path) = line.split_ascii_whitespace().nth(1) {
-                    rom = path.to_string();
-                    println!("rom: {}", rom);
-                    continue;
-                }
-
-                println!("load command parse failed");
-            }
-            Ok(line) if line.starts_with("break ") => {
-                if let Some(addr_str) = line.split_ascii_whitespace().nth(1) {
-                    if let Ok(addr) = u16::from_str_radix(addr_str.trim_start_matches("0x"), 16) {
-                        breakpoints.push(addr);
-
-                        println!("add breakpoint: {:04X}", addr);
-                        continue;
-                    }
-                }
-
-                println!("break command parse failed");
-            }
-            Ok(line) if line.starts_with("run") => {
-                break;
-            }
-            Ok(line) => {
-                println!("unknown command {}", line);
-            }
-            Err(_) => {
-                println!("aborted");
-                std::process::exit(0);
-            }
-        }
-    }
-
-    let mut reader = BufReader::new(File::open(rom).unwrap());
+    let mut reader = BufReader::new(File::open(args[1].clone()).unwrap());
     let rom = Rom::new(&mut reader).unwrap();
 
-    println!("rom loaded {:?}", rom);
+    let rl = Editor::<()>::new();
 
-    let debugger = Debugger::new(
-        breakpoints,
-        Box::new(move || loop {
-            let readline = rl.readline(">>> ");
-
-            match readline {
-                Ok(line) if line.starts_with("continue") => {
-                    return false;
-                }
-                Ok(line) if line.starts_with("step") => {
-                    return true;
-                }
-                Ok(line) => {
-                    println!("unknown command {}", line);
-                }
-                Err(_) => {
-                    println!("aborted");
-                    std::process::exit(0);
-                }
-            }
-        }),
-    );
-
-    let mut gb = Gb::new(rom, debugger);
+    let mut gb = Gb::new(rom, rl);
 
     gb.reset().unwrap();
 
@@ -143,8 +78,7 @@ fn main() {
                     }
                 }
 
-                // *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_micros(1));
-                *control_flow = ControlFlow::Poll;
+                *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_micros(1));
             }
         }
     });

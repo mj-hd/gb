@@ -1,8 +1,8 @@
 use crate::bus::Bus;
-use crate::debugger::Debugger;
 use anyhow::{bail, Result};
 use bitfield::bitfield;
 use bitmatch::bitmatch;
+use rustyline::Editor;
 use std::ops::{BitAnd, Shr};
 
 bitfield! {
@@ -14,7 +14,6 @@ bitfield! {
     n, set_n: 6;
     z, set_z: 7;
 }
-
 pub struct Cpu {
     a: u8,
     f: F,
@@ -29,22 +28,29 @@ pub struct Cpu {
     ime: bool,
     halt: bool,
 
+    stepping: bool,
+    pub breakpoints: Vec<u16>,
+    rl: Editor<()>,
+
     pub bus: Bus,
 }
 
 impl Cpu {
-    pub fn new(bus: Bus, debugger: Debugger) -> Self {
+    pub fn new(bus: Bus, rl: Editor<()>) -> Self {
         Cpu {
-            a: Default::default(),
-            f: F::default(),
-            bc: Default::default(),
-            de: Default::default(),
-            hl: Default::default(),
-            sp: Default::default(),
-            pc: Default::default(),
-            stalls: Default::default(),
+            a: 0,
+            f: Default::default(),
+            bc: 0,
+            de: 0,
+            hl: 0,
+            sp: 0,
+            pc: 0,
+            stalls: 0,
             ime: false,
             halt: false,
+            stepping: true,
+            breakpoints: Vec::new(),
+            rl,
             bus,
         }
     }
@@ -122,15 +128,15 @@ impl Cpu {
 
         let opecode = self.bus.read(self.pc)?;
 
-        let debug = self.debugger.step_run || self.debugger.breakpoints.contains(&self.pc);
+        let debug = self.stepping || self.breakpoints.contains(&self.pc);
 
         if debug {
             println!(
-                "PC: {:#04X}, OPECODE: {:#02X}, A: {:#02X}, BC: {:#04X}, DE: {:#04X}, HL: {:#04X}, SP: {:#04X} FLAGS: {:?}",
-                self.pc, opecode, self.a, self.bc, self.de, self.hl, self.sp, self.f,
+                "PC: {:#04X}, OPECODE: {:#02X}, A: {:#02X}, BC: {:#04X}, DE: {:#04X}, HL: {:#04X}, SP: {:#04X} FLAGS: {:?}, IE: {:?}, IRQ: {}",
+                self.pc, opecode, self.a, self.bc, self.de, self.hl, self.sp, self.f, self.bus.ie, self.bus.read_irq().map_or("ERR".to_string(), |v| format!("{:#02X}", v)),
             );
 
-            self.debugger.step_run = (self.debugger.on_step)();
+            self.debug_break();
         }
 
         self.pc = self.pc.wrapping_add(1);
@@ -613,11 +619,11 @@ impl Cpu {
             // SRL r
             "00111xxx" => self.srl_8_r(x),
             // BIT b, r
-            "01000xxx" => self.bit_8_im_bit_r(x),
+            "01bbbxxx" => self.bit_8_bit_r(x, b),
             // SET b, r
-            "11000xxx" => self.set_8_im_bit_r(x),
+            "11bbbxxx" => self.set_8_bit_r(x, b),
             // RES b, r
-            "10000xxx" => self.reset_8_im_bit_r(x),
+            "10bbbxxx" => self.reset_8_bit_r(x, b),
             _ => bail!("unimplemented prefixed opecode {:?}", opecode),
         }
     }
@@ -1459,10 +1465,9 @@ impl Cpu {
         ))
     }
 
-    pub fn bit_8_im_bit_r(&mut self, index: u8) -> Result<String> {
+    pub fn bit_8_bit_r(&mut self, index: u8, bit: u8) -> Result<String> {
         let left = self.r8(index)?;
-        let right = self.bus.read(self.pc)?;
-        self.pc = self.pc.wrapping_add(1);
+        let right = bit;
         let result = (left >> right) & 1;
 
         self.f.set_z(result == 0);
@@ -1478,10 +1483,9 @@ impl Cpu {
         ))
     }
 
-    pub fn set_8_im_bit_r(&mut self, index: u8) -> Result<String> {
+    pub fn set_8_bit_r(&mut self, index: u8, bit: u8) -> Result<String> {
         let left = self.r8(index)?;
-        let right = self.bus.read(self.pc)?;
-        self.pc = self.pc.wrapping_add(1);
+        let right = bit;
         let result = left | (1 << right);
 
         self.set_r8(index, result)?;
@@ -1495,10 +1499,9 @@ impl Cpu {
         ))
     }
 
-    pub fn reset_8_im_bit_r(&mut self, index: u8) -> Result<String> {
+    pub fn reset_8_bit_r(&mut self, index: u8, bit: u8) -> Result<String> {
         let left = self.r8(index)?;
-        let right = self.bus.read(self.pc)?;
-        self.pc = self.pc.wrapping_add(1);
+        let right = bit;
         let result = left & !(1 << right);
 
         self.set_r8(index, result)?;
@@ -1693,13 +1696,13 @@ impl Cpu {
     }
 
     pub fn ret(&mut self) -> Result<String> {
-        self.sp = self.sp.wrapping_sub(2);
         let addr = self.bus.read_word(self.sp)?;
+        self.sp = self.sp.wrapping_add(2);
         self.pc = addr;
 
         Ok(format!(
             "RET: (SP)=({:04X})={:04X}",
-            self.sp.wrapping_add(2),
+            self.sp.wrapping_sub(2),
             addr
         ))
     }
@@ -1708,14 +1711,14 @@ impl Cpu {
         let addr = self.bus.read_word(self.sp)?;
 
         if !self.f.z() {
-            self.sp = self.sp.wrapping_sub(2);
+            self.sp = self.sp.wrapping_add(2);
             self.pc = addr;
         }
 
         Ok(format!(
             "RET NZ: NZ={}, (SP)=({:04X})={:04X}",
             !self.f.z(),
-            self.sp.wrapping_add(2),
+            self.sp.wrapping_sub(2),
             addr
         ))
     }
@@ -1724,14 +1727,14 @@ impl Cpu {
         let addr = self.bus.read_word(self.sp)?;
 
         if self.f.z() {
-            self.sp = self.sp.wrapping_sub(2);
+            self.sp = self.sp.wrapping_add(2);
             self.pc = addr;
         }
 
         Ok(format!(
             "RET Z: Z={}, (SP)=({:04X})={:04X}",
             self.f.z(),
-            self.sp.wrapping_add(2),
+            self.sp.wrapping_sub(2),
             addr
         ))
     }
@@ -1740,14 +1743,14 @@ impl Cpu {
         let addr = self.bus.read_word(self.sp)?;
 
         if !self.f.c() {
-            self.sp = self.sp.wrapping_sub(2);
+            self.sp = self.sp.wrapping_add(2);
             self.pc = addr;
         }
 
         Ok(format!(
             "RET NC: NC={}, (SP)=({:04X})={:04X}",
             !self.f.c(),
-            self.sp.wrapping_add(2),
+            self.sp.wrapping_sub(2),
             addr
         ))
     }
@@ -1756,28 +1759,28 @@ impl Cpu {
         let addr = self.bus.read_word(self.sp)?;
 
         if self.f.c() {
-            self.sp = self.sp.wrapping_sub(2);
+            self.sp = self.sp.wrapping_add(2);
             self.pc = addr;
         }
 
         Ok(format!(
             "RET C: C={}, (SP)=({:04X})={:04X}",
             self.f.c(),
-            self.sp.wrapping_add(2),
+            self.sp.wrapping_sub(2),
             addr
         ))
     }
 
     pub fn reti(&mut self) -> Result<String> {
-        self.sp = self.sp.wrapping_sub(2);
         let addr = self.bus.read_word(self.sp)?;
+        self.sp = self.sp.wrapping_add(2);
         self.pc = addr;
 
         self.ime = true;
 
         Ok(format!(
             "RETI: (SP)=({:04X})={:04X}",
-            self.sp.wrapping_add(2),
+            self.sp.wrapping_sub(2),
             addr
         ))
     }
@@ -1848,5 +1851,80 @@ impl Cpu {
         self.f.set_c(true);
 
         Ok("SCF".to_string())
+    }
+
+    pub fn debug_break(&mut self) {
+        loop {
+            let readline = self.rl.readline(">>> ");
+
+            match readline {
+                Ok(line) if line.starts_with("continue") || line == "c" => {
+                    self.rl.add_history_entry(line.as_str());
+                    self.stepping = false;
+                    break;
+                }
+                Ok(line) if line.starts_with("step") || line == "s" => {
+                    self.rl.add_history_entry(line.as_str());
+                    break;
+                }
+                Ok(line) if line.starts_with("break ") || line.starts_with("b ") => {
+                    if let Some(addr_str) = line.split_ascii_whitespace().nth(1) {
+                        if let Ok(addr) = u16::from_str_radix(addr_str.trim_start_matches("0x"), 16)
+                        {
+                            self.rl.add_history_entry(line.as_str());
+                            self.breakpoints.push(addr);
+
+                            println!("add breakpoint: {:#04X}", addr);
+                            continue;
+                        }
+                    }
+
+                    println!("break command parse failed");
+                }
+                Ok(line) if line.starts_with("print ") || line.starts_with("p ") => {
+                    if let Some(addr_str) = line.split_ascii_whitespace().nth(1) {
+                        if let Ok(addr) = u16::from_str_radix(addr_str.trim_start_matches("0x"), 16)
+                        {
+                            if let Ok(val) = self.bus.read(addr) {
+                                self.rl.add_history_entry(line.as_str());
+                                println!("({:#04X})={:#02X}", addr, val);
+                                continue;
+                            }
+                        }
+                    }
+
+                    println!("print command failed");
+                }
+                Ok(line) if line.starts_with("printw ") || line.starts_with("pw ") => {
+                    if let Some(addr_str) = line.split_ascii_whitespace().nth(1) {
+                        if let Ok(addr) = u16::from_str_radix(addr_str.trim_start_matches("0x"), 16)
+                        {
+                            if let Ok(val) = self.bus.read_word(addr) {
+                                self.rl.add_history_entry(line.as_str());
+                                println!("({:#04X})={:#04X}", addr, val);
+                                continue;
+                            }
+                        }
+                    }
+
+                    println!("printw command parse failed");
+                }
+                Ok(line) if line.starts_with("reset") || line == "r" => {
+                    self.rl.add_history_entry(line.as_str());
+                    if let Err(err) = self.reset() {
+                        println!("failed to reset {}", err);
+                    }
+
+                    break;
+                }
+                Ok(line) => {
+                    println!("unknown command {}", line);
+                }
+                Err(_) => {
+                    println!("aborted");
+                    std::process::exit(0);
+                }
+            }
+        }
     }
 }
