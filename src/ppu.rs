@@ -95,6 +95,9 @@ pub struct Ppu {
     object_palette_0: Palette,
     object_palette_1: Palette,
 
+    pub int_v_blank: bool,
+    pub int_lcd_stat: bool,
+
     x: u8,
     y: u8,
 
@@ -122,6 +125,8 @@ impl Ppu {
             object_palette_1: Palette::from(0x00),
             x: 0,
             y: 0,
+            int_v_blank: false,
+            int_lcd_stat: false,
             oam: [Oam::default(); 0xA0],
             pixels: ImageBuffer::new(VISIBLE_WIDTH as u32, VISIBLE_HEIGHT as u32),
         }
@@ -222,8 +227,11 @@ impl Ppu {
                 }
                 _ => {}
             }
-        } else {
+        }
+
+        if (self.lines == 144) {
             self.mode = Mode::VBlank;
+            self.int_v_blank = true;
         }
 
         if self.mode == Mode::Drawing {
@@ -251,7 +259,7 @@ impl Ppu {
     }
 
     pub fn write(&mut self, addr: u16, val: u8) -> Result<()> {
-        println!("PPU write: {:02X}={:02X}", addr, val);
+        // println!("PPU write: {:02X}={:02X}", addr, val);
         self.vram[(addr - 0x8000) as usize] = val;
         Ok(())
     }

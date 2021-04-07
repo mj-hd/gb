@@ -26,7 +26,8 @@ pub struct Cpu {
 
     stalls: u8,
 
-    debugger: Debugger,
+    ime: bool,
+    halt: bool,
 
     pub bus: Bus,
 }
@@ -42,7 +43,8 @@ impl Cpu {
             sp: Default::default(),
             pc: Default::default(),
             stalls: Default::default(),
-            debugger,
+            ime: false,
+            halt: false,
             bus,
         }
     }
@@ -93,11 +95,28 @@ impl Cpu {
     }
 
     pub fn tick(&mut self) -> Result<()> {
-        // TODO interrupt
+        if self.ime {
+            if let Some(mnemonic) = self.interrupt()? {
+                self.ime = false;
+                self.halt = false;
+
+                println!(
+                    "{}: IE={:?} IRQ={:?} IME={}",
+                    mnemonic,
+                    self.bus.ie,
+                    self.bus.read_irq(),
+                    self.ime
+                );
+            }
+        }
 
         if self.stalls > 0 {
             self.stalls -= 1;
 
+            return Ok(());
+        }
+
+        if self.halt {
             return Ok(());
         }
 
@@ -340,16 +359,62 @@ impl Cpu {
         self.carry_positive_n(result, left, right, 15)
     }
 
-    fn carry_negative_16(&self, result: u16, left: u16, right: u16) -> bool {
-        self.carry_negative_n(result, left, right, 15)
-    }
-
     fn half_carry_positive_16(&self, result: u16, left: u16, right: u16) -> bool {
         self.carry_positive_n(result, left, right, 11)
     }
 
-    fn half_carry_negative_16(&self, result: u16, left: u16, right: u16) -> bool {
-        self.carry_negative_n(result, left, right, 11)
+    fn interrupt(&mut self) -> Result<Option<String>> {
+        let mut int = 0x0040;
+
+        if self.bus.ie.v_blank() && self.bus.irq_v_blank() {
+            self.bus.set_irq_v_blank(false);
+
+            self.call(int)?;
+
+            return Ok(Some(format!("INT {:02X}h", int)));
+        }
+
+        int += 0x0008;
+
+        if self.bus.ie.lcd_stat() && self.bus.irq_lcd_stat() {
+            self.bus.set_irq_lcd_stat(false);
+
+            self.call(int)?;
+
+            return Ok(Some(format!("INT {:02X}h", int)));
+        }
+
+        // int += 0x0008;
+
+        // if self.bus.ie.timer() && self.bus.irq.timer() {
+        //     self.bus.irq.set_timer(false);
+
+        //     self.call(int)?;
+
+        //     return Ok(Some(format!("INT {:02X}h", int)));
+        // }
+
+        // int += 0x0008;
+
+        // if self.bus.ie.serial() && self.bus.irq.serial() {
+        //     self.bus.irq.set_serial(false);
+
+        //     self.call(int)?;
+
+        //     return Ok(Some(format!("INT {:02X}h", int)));
+        // }
+
+        // int += 0x0008;
+
+        // if self.bus.ie.joypad() && self.bus.irq.joypad() {
+        //     self.bus.irq.set_joypad(false);
+
+        //     self.call(int)?;
+
+        //     return Ok(Some(format!("INT {:02X}h", int)));
+        // }
+
+        Ok(None)
     }
 
     #[bitmatch]
@@ -562,7 +627,7 @@ impl Cpu {
     }
 
     pub fn halt(&mut self) -> Result<String> {
-        // unimplemented!("停止する");
+        self.halt = true;
 
         Ok("HALT".to_string())
     }
@@ -574,13 +639,13 @@ impl Cpu {
     }
 
     pub fn di(&mut self) -> Result<String> {
-        // unimplemented!("直後の命令実行後に割り込み中止");
+        self.ime = false;
 
         Ok("DI".to_string())
     }
 
     pub fn ei(&mut self) -> Result<String> {
-        // unimplemented!("直後の命令実行後に割り込み再開");
+        self.ime = true;
 
         Ok("EI".to_string())
     }
@@ -1557,12 +1622,19 @@ impl Cpu {
         Ok(format!("JR C, n: C={}, n={}", self.f.c(), index))
     }
 
+    pub fn call(&mut self, addr: u16) -> Result<()> {
+        self.sp = self.sp.wrapping_sub(2);
+        self.bus.write_word(self.sp, self.pc)?;
+        self.pc = addr;
+
+        Ok(())
+    }
+
     pub fn call_16(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
-        self.bus.write_word(self.sp, self.pc)?;
-        self.sp = self.sp.wrapping_sub(2);
-        self.pc = addr;
+
+        self.call(addr)?;
 
         Ok(format!("CALL nn: nn={:04X}", addr))
     }
@@ -1572,9 +1644,7 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(2);
 
         if !self.f.z() {
-            self.bus.write_word(self.sp, self.pc)?;
-            self.sp = self.sp.wrapping_sub(2);
-            self.pc = addr;
+            self.call(addr)?;
         }
 
         Ok(format!("CALL NZ, nn: NZ={}, nn={:04X}", !self.f.z(), addr))
@@ -1585,9 +1655,7 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(2);
 
         if self.f.z() {
-            self.bus.write_word(self.sp, self.pc)?;
-            self.sp = self.sp.wrapping_sub(2);
-            self.pc = addr;
+            self.call(addr)?;
         }
 
         Ok(format!("CALL Z, nn: Z={}, nn={:04X}", self.f.z(), addr))
@@ -1598,9 +1666,7 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(2);
 
         if !self.f.c() {
-            self.bus.write_word(self.sp, self.pc)?;
-            self.sp = self.sp.wrapping_sub(2);
-            self.pc = addr;
+            self.call(addr)?;
         }
 
         Ok(format!("CALL NC, nn: NC={}, nn={:04X}", !self.f.c(), addr))
@@ -1611,9 +1677,7 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(2);
 
         if self.f.c() {
-            self.bus.write_word(self.sp, self.pc)?;
-            self.sp = self.sp.wrapping_sub(2);
-            self.pc = addr;
+            self.call(addr)?;
         }
 
         Ok(format!("CALL C, nn: C={}, nn={:04X}", self.f.c(), addr))
@@ -1709,7 +1773,7 @@ impl Cpu {
         let addr = self.bus.read_word(self.sp)?;
         self.pc = addr;
 
-        unimplemented!("割り込みを再開");
+        self.ime = true;
 
         Ok(format!(
             "RETI: (SP)=({:04X})={:04X}",
