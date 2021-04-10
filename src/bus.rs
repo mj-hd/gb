@@ -20,7 +20,7 @@ pub struct Bus {
     ram: [u8; 0x8000],
     hram: [u8; 0x0080],
     // joyCon: JoyCon,
-    mbc: Box<dyn Mbc>,
+    mbc: Box<dyn Mbc + Send>,
 
     pub ie: Ie,
 
@@ -28,7 +28,7 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(ppu: Ppu, mbc: Box<dyn Mbc>) -> Self {
+    pub fn new(ppu: Ppu, mbc: Box<dyn Mbc + Send>) -> Self {
         Bus {
             ram: [0; 0x8000],
             hram: [0; 0x0080],
@@ -193,22 +193,22 @@ impl Bus {
     }
 
     pub fn write_serial(&mut self, val: u8) -> Result<()> {
-        println!("SERIAL: {:#02X}", val);
+        eprintln!("SERIAL: {:#02X}", val);
 
         Ok(())
     }
 
     pub fn write_serial_ctrl(&mut self, val: u8) -> Result<()> {
         if val & 0b00000001 > 0 {
-            println!("SERIAL CTRL: INTERNAL CLOCK");
+            eprintln!("SERIAL CTRL: INTERNAL CLOCK");
         } else {
-            println!("SERIAL CTRL: EXTERNAL CLOCK");
+            eprintln!("SERIAL CTRL: EXTERNAL CLOCK");
         }
 
         if val & 0b10000000 > 0 {
-            println!("SERIAL CTRL: START TRANSFER");
+            eprintln!("SERIAL CTRL: START TRANSFER");
         } else {
-            println!("SERIAL CTRL: NO TRANSFER");
+            eprintln!("SERIAL CTRL: NO TRANSFER");
         }
 
         Ok(())

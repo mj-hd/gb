@@ -1,3 +1,4 @@
+use crate::utils::bytes_to_hex;
 use anyhow::Result;
 use bitfield::bitfield;
 use image::{ImageBuffer, Rgba};
@@ -144,16 +145,18 @@ impl Ppu {
 
     fn tile_to_pixel_line(&self, tile_num: u8, row: u8, palette: &Palette) -> [Rgba<u8>; 8] {
         let base_addr = if self.lcd_control.tile_data_select() {
-            0x0000
+            0x0000u16
         } else {
             0x9000u16 - 0x8000u16
         };
+
         let index_addr = if self.lcd_control.tile_data_select() {
             (row as u16) * 2 + (tile_num as u16) * 16
         } else {
-            (row as u16) * 2 + (tile_num as i8 as u16) * 16
+            ((row as i16) * 2 + (tile_num as i8 as i16) * 16) as u16
         };
-        let addr = base_addr + index_addr;
+
+        let addr = base_addr.wrapping_add(index_addr);
 
         let bit = self.vram[addr as usize];
         let color = self.vram[(addr + 1) as usize];
@@ -182,8 +185,10 @@ impl Ppu {
         } else {
             0x9800u16 - 0x8000u16
         };
+
         let index_addr = tile_x as u16 + (tile_y as u16) * 32;
-        let addr = base_addr + index_addr;
+
+        let addr = base_addr.wrapping_add(index_addr);
 
         let tile_num = self.vram[addr as usize];
 
@@ -229,7 +234,7 @@ impl Ppu {
             }
         }
 
-        if (self.lines == 144) {
+        if self.lines == 144 {
             self.mode = Mode::VBlank;
             self.int_v_blank = true;
         }
@@ -259,7 +264,7 @@ impl Ppu {
     }
 
     pub fn write(&mut self, addr: u16, val: u8) -> Result<()> {
-        // println!("PPU write: {:02X}={:02X}", addr, val);
+        // println!("PPU WRITE: {:#02X}={:#02X}", addr, val);
         self.vram[(addr - 0x8000) as usize] = val;
         Ok(())
     }

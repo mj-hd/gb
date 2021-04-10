@@ -6,7 +6,7 @@ pub trait Mbc {
     fn write(&mut self, addr: u16, val: u8) -> Result<()>;
 }
 
-pub fn new_mbc(rom: Rom) -> Box<dyn Mbc> {
+pub fn new_mbc(rom: Rom) -> Box<dyn Mbc + Send> {
     match rom.mbc_type {
         MbcType::RomOnly => Box::new(RomOnly::new(rom)),
         MbcType::Mbc1 | MbcType::Mbc1Ram | MbcType::Mbc1RamBattery => Box::new(Mbc1::new(rom)),
@@ -18,20 +18,34 @@ pub fn new_mbc(rom: Rom) -> Box<dyn Mbc> {
 
 pub struct RomOnly {
     rom: Rom,
+    ram: [u8; 8 * 1024],
 }
 
 impl RomOnly {
     pub fn new(rom: Rom) -> Self {
-        RomOnly { rom }
+        RomOnly {
+            rom,
+            ram: [0; 8 * 1024],
+        }
     }
 }
 
 impl Mbc for RomOnly {
     fn read(&self, addr: u16) -> Result<u8> {
+        if addr >= 0xA000 {
+            return Ok(self.ram[(addr - 0xA000) as usize]);
+        }
+
         Ok(self.rom.data[addr as usize])
     }
 
-    fn write(&mut self, _addr: u16, _val: u8) -> Result<()> {
+    fn write(&mut self, addr: u16, val: u8) -> Result<()> {
+        if addr >= 0xA000 {
+            self.ram[(addr - 0xA000) as usize] = val;
+
+            return Ok(());
+        }
+
         Ok(())
     }
 }
@@ -71,7 +85,9 @@ impl Mbc1 {
 
     fn read_ram_from_bank(&self, addr: u16) -> Result<u8> {
         if !self.enable_ram {
-            bail!("disabled ram read");
+            eprintln!("disabled ram read");
+
+            return Ok(0);
         }
 
         let base_addr = ((self.ram_bank as u16) * 8 * 1024) as usize;
@@ -81,7 +97,9 @@ impl Mbc1 {
 
     fn write_ram_into_bank(&mut self, addr: u16, val: u8) -> Result<()> {
         if !self.enable_ram {
-            bail!("disabled ram write");
+            eprintln!("disabled ram write");
+
+            return Ok(());
         }
 
         let base_addr = ((self.ram_bank as u16) * 8 * 1024) as usize;
@@ -142,11 +160,8 @@ impl Mbc for Mbc1 {
             },
             0x6000..=0x7FFF => {
                 self.select_mode = match val {
-                    0x00 => Mbc1SelectMode::ROM,
                     0x01 => Mbc1SelectMode::RAM,
-                    _ => {
-                        bail!("unknown mbc1 select bank mode: {:#02X}", val);
-                    }
+                    _ => Mbc1SelectMode::ROM,
                 };
 
                 Ok(())

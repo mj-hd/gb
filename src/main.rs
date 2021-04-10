@@ -5,6 +5,8 @@ use rustyline::Editor;
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 use winit::dpi::LogicalSize;
 use winit::event::{Event, VirtualKeyCode, WindowEvent};
@@ -35,51 +37,65 @@ fn main() {
 
     let rl = Editor::<()>::new();
 
-    let mut gb = Gb::new(rom, rl);
+    let gb = Arc::new(Mutex::new(Gb::new(rom, rl)));
 
-    gb.reset().unwrap();
+    {
+        let gb = gb.clone();
 
-    let mut time = Instant::now();
+        gb.lock().unwrap().reset().unwrap();
 
-    event_loop.run(move |event, _, control_flow| {
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                *control_flow = ControlFlow::Exit;
-            }
-            Event::RedrawRequested(_) => {
-                gb.render(pixels.get_frame()).unwrap();
-                pixels.render().unwrap();
-            }
-            _ => {}
-        }
+        thread::spawn(move || loop {
+            // 1 / (1.05 * 1024 * 1024) μs = 0.91 μs ≒ 1μs
+            thread::sleep(Duration::from_micros(1));
+            gb.lock().unwrap().tick().unwrap();
+        });
+    }
 
-        gb.tick().unwrap();
+    {
+        let mut time = Instant::now();
 
-        match *control_flow {
-            ControlFlow::Exit => {}
-            _ => {
-                if time.elapsed() >= Duration::from_millis(1000 / 60) {
-                    time = Instant::now();
-
-                    window.request_redraw();
+        event_loop.run(move |event, _, control_flow| {
+            match event {
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
+                    *control_flow = ControlFlow::Exit;
                 }
+                Event::RedrawRequested(_) => {
+                    gb.lock().unwrap().render(pixels.get_frame()).unwrap();
+                    pixels.render().unwrap();
+                }
+                _ => {}
+            }
 
-                if input.update(&event) {
-                    if input.key_pressed(VirtualKeyCode::Escape) || input.quit() {
-                        *control_flow = ControlFlow::Exit;
-                        return;
+            match *control_flow {
+                ControlFlow::Exit => {}
+                _ => {
+                    if time.elapsed() >= Duration::from_millis(1000 / 60) {
+                        time = Instant::now();
+
+                        window.request_redraw();
                     }
 
-                    if let Some(size) = input.window_resized() {
-                        pixels.resize(size.width, size.height);
-                    }
-                }
+                    if input.update(&event) {
+                        if input.key_pressed(VirtualKeyCode::Escape) || input.quit() {
+                            *control_flow = ControlFlow::Exit;
+                            return;
+                        }
 
-                *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_micros(1));
+                        if input.key_pressed(VirtualKeyCode::B) {
+                            gb.lock().unwrap().debug_break().unwrap();
+                        }
+
+                        if let Some(size) = input.window_resized() {
+                            pixels.resize(size.width, size.height);
+                        }
+                    }
+
+                    *control_flow = ControlFlow::Poll;
+                }
             }
-        }
-    });
+        });
+    }
 }

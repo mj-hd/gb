@@ -24,8 +24,15 @@ impl Gb {
         self.cpu.reset()
     }
 
+    pub fn debug_break(&mut self) -> Result<()> {
+        self.cpu.debug_break();
+
+        Ok(())
+    }
+
     pub fn tick(&mut self) -> Result<()> {
         self.cpu.tick()?;
+        self.cpu.bus.tick()?;
 
         Ok(())
     }
