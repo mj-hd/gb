@@ -46,8 +46,8 @@ fn main() {
         gb.lock().unwrap().reset().unwrap();
 
         thread::spawn(move || loop {
-            // 1 / (1.05 * 1024 * 1024) μs = 0.91 μs ≒ 1μs
-            thread::sleep(Duration::from_micros(1));
+            // 1 / (1.05 * 1024 * 1024) μs ≒ 900 ns
+            thread::sleep(Duration::from_nanos(900));
             gb.lock().unwrap().tick().unwrap();
         });
     }

@@ -48,7 +48,7 @@ impl Cpu {
             stalls: 0,
             ime: false,
             halt: false,
-            stepping: false,
+            stepping: true,
             breakpoints: Vec::new(),
             rl,
             // trace_left: 300000,
@@ -223,10 +223,10 @@ impl Cpu {
 
     fn set_af(&mut self, val: u16) {
         self.a = (val >> 8) as u8;
-        self.f.0 = (val & 0x00FF) as u8;
+        self.f.0 = (val & 0x00F0) as u8;
     }
 
-    fn r8(&self, index: u8) -> Result<u8> {
+    fn r8(&mut self, index: u8) -> Result<u8> {
         match index {
             0 => Ok(self.b()),
             1 => Ok(self.c()),
@@ -358,6 +358,10 @@ impl Cpu {
     }
 
     fn half_carry_positive_16(&self, left: u16, right: u16) -> bool {
+        (left & 0x00FF) + (right & 0x00FF) > 0x00FF
+    }
+
+    fn half_carry_positive_16_12(&self, left: u16, right: u16) -> bool {
         (left & 0x0FFF) + (right & 0x0FFF) > 0x0FFF
     }
 
@@ -844,23 +848,24 @@ impl Cpu {
     pub fn load_16_addr_im16_sp(&mut self) -> Result<String> {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = self.pc.wrapping_add(2);
-        let val = self.bus.read_word(addr)?;
-        self.sp = val;
+        let val = self.sp;
+        self.bus.write_word(addr, val)?;
 
         Ok(format!("LD (nn), sp: (nn)=({:04X}), SP={:04X}", addr, val))
     }
 
     pub fn load_16_hl_index_im8_sp(&mut self) -> Result<String> {
-        let base_addr = self.sp as u16;
+        let base_addr = self.sp;
         let index_addr = self.bus.read(self.pc)? as i8 as u16;
         self.pc = self.pc.wrapping_add(1);
         self.hl = base_addr.wrapping_add(index_addr);
 
         self.f.set_z(false);
         self.f.set_n(false);
-        self.f.set_h(self.carry_positive_16(base_addr, index_addr));
         self.f
-            .set_c(self.half_carry_positive_16(base_addr, index_addr));
+            .set_h(self.half_carry_positive(base_addr as u8, index_addr as u8));
+        self.f
+            .set_c(self.carry_positive(base_addr as u8, index_addr as u8));
 
         Ok(format!(
             "LD HL, SP+n: SP={:04X}, n={:02X}, SP+n={:04X}",
@@ -871,6 +876,8 @@ impl Cpu {
     pub fn load_16_sp_hl(&mut self) -> Result<String> {
         self.sp = self.hl;
 
+        self.stalls += 8;
+
         Ok(format!("LD SP, HL: HL={:04X}", self.hl))
     }
 
@@ -878,6 +885,8 @@ impl Cpu {
         let val = self.r16(index, true)?;
         self.sp = self.sp.wrapping_sub(2);
         self.bus.write_word(self.sp, val)?;
+
+        self.stalls += 16;
 
         Ok(format!(
             "PUSH {}: {0}={:04X}",
@@ -890,6 +899,8 @@ impl Cpu {
         let val = self.bus.read_word(self.sp)?;
         self.sp = self.sp.wrapping_add(2);
         self.set_r16(index, val, true)?;
+
+        self.stalls += 12;
 
         Ok(format!(
             "POP {}: data={:04X}",
@@ -909,6 +920,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(self.half_carry_positive(left, right));
         self.f.set_c(self.carry_positive(left, right));
+
+        self.stalls += 4;
 
         Ok(format!(
             "ADD A, {}: A={:02X}, {0}={:02X}",
@@ -931,6 +944,8 @@ impl Cpu {
         self.f.set_h(self.half_carry_positive(left, right));
         self.f.set_c(self.carry_positive(left, right));
 
+        self.stalls += 8;
+
         Ok(format!("ADD A, n: A={:02X}, n={:02X}", left, right))
     }
 
@@ -952,6 +967,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(h1 || h2);
         self.f.set_c(c1 || c2);
+
+        self.stalls += 4;
 
         Ok(format!(
             "ADC A, {}: A={:02X}, {0}={:02X}",
@@ -981,6 +998,8 @@ impl Cpu {
         self.f.set_h(h1 || h2);
         self.f.set_c(c1 || c2);
 
+        self.stalls += 8;
+
         Ok(format!("ADC A, n: A={:02X}, n={:02X}", left, right,))
     }
 
@@ -995,6 +1014,8 @@ impl Cpu {
         self.f.set_n(true);
         self.f.set_h(self.half_carry_negative(left, right));
         self.f.set_c(self.carry_negative(left, right));
+
+        self.stalls += 4;
 
         Ok(format!(
             "SUB A, {}: A={:02X}, {0}={:02X}",
@@ -1017,6 +1038,8 @@ impl Cpu {
         self.f.set_h(self.half_carry_negative(left, right));
         self.f.set_c(self.carry_negative(left, right));
 
+        self.stalls += 8;
+
         Ok(format!("SUB A, n: A={:02X}, n={:02X}", left, right))
     }
 
@@ -1038,6 +1061,8 @@ impl Cpu {
         self.f.set_n(true);
         self.f.set_h(h1 || h2);
         self.f.set_c(c1 || c2);
+
+        self.stalls += 4;
 
         Ok(format!(
             "SBC A, {}: A={:02X}, {0}={:02X}",
@@ -1067,6 +1092,8 @@ impl Cpu {
         self.f.set_h(h1 || h2);
         self.f.set_c(c1 || c2);
 
+        self.stalls += 8;
+
         Ok(format!("SBC A, n: A={:02X}, n={:02X}", left, right))
     }
 
@@ -1081,6 +1108,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(true);
         self.f.set_c(false);
+
+        self.stalls += 4;
 
         Ok(format!(
             "AND A, {}: A={:02X}, {0}={:02X}",
@@ -1103,6 +1132,8 @@ impl Cpu {
         self.f.set_h(true);
         self.f.set_c(false);
 
+        self.stalls += 8;
+
         Ok(format!("AND A, n: A={:02X}, n={:02X}", left, right))
     }
 
@@ -1117,6 +1148,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(false);
         self.f.set_c(false);
+
+        self.stalls += 4;
 
         Ok(format!(
             "OR A, {}: A={:02X}, {0}={:02X}",
@@ -1139,6 +1172,8 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(false);
 
+        self.stalls += 8;
+
         Ok(format!("OR A, n: A={:02X}, n={:02X}", left, right))
     }
 
@@ -1153,6 +1188,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(false);
         self.f.set_c(false);
+
+        self.stalls += 4;
 
         Ok(format!(
             "XOR A, {}: A={:02X}, {0}={:02X}",
@@ -1175,18 +1212,22 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(false);
 
+        self.stalls += 8;
+
         Ok(format!("XOR A, n: A={:02X}, n={:02X}", left, right))
     }
 
     pub fn cp_8_a_r(&mut self, index: u8) -> Result<String> {
         let left = self.a;
         let right = self.r8(index)?;
-        let result = left.wrapping_sub(left);
+        let result = left.wrapping_sub(right);
 
         self.f.set_z(result == 0);
         self.f.set_n(true);
         self.f.set_h(self.half_carry_negative(left, right));
         self.f.set_c(self.carry_negative(left, right));
+
+        self.stalls += 4;
 
         Ok(format!(
             "CP A, {}: A={:02X}, {0}={:02X}",
@@ -1207,6 +1248,8 @@ impl Cpu {
         self.f.set_h(self.half_carry_negative(left, right));
         self.f.set_c(self.carry_negative(left, right));
 
+        self.stalls += 8;
+
         Ok(format!("CP A, n: A={:02X}, n={:02X}", left, right))
     }
 
@@ -1220,6 +1263,8 @@ impl Cpu {
         self.f.set_z(result == 0);
         self.f.set_n(false);
         self.f.set_h(self.half_carry_positive(left, right));
+
+        self.stalls += 4;
 
         Ok(format!("INC {}: {0}={:02X}", self.r8_str(index), left))
     }
@@ -1235,6 +1280,8 @@ impl Cpu {
         self.f.set_n(true);
         self.f.set_h(self.half_carry_negative(left, right));
 
+        self.stalls += 4;
+
         Ok(format!("DEC {}: {0}={:02X}", self.r8_str(index), left))
     }
 
@@ -1246,8 +1293,10 @@ impl Cpu {
         self.hl = result;
 
         self.f.set_n(false);
-        self.f.set_h(self.half_carry_positive_16(left, right));
+        self.f.set_h(self.half_carry_positive_16_12(left, right));
         self.f.set_c(self.carry_positive_16(left, right));
+
+        self.stalls += 8;
 
         Ok(format!(
             "ADD HL, {}: HL={:04X}, {0}={:04X}",
@@ -1267,8 +1316,11 @@ impl Cpu {
 
         self.f.set_z(false);
         self.f.set_n(false);
-        self.f.set_h(self.half_carry_positive_16(left, right));
-        self.f.set_c(self.carry_positive_16(left, right));
+        self.f
+            .set_h(self.half_carry_positive(left as u8, right as u8));
+        self.f.set_c(self.carry_positive(left as u8, right as u8));
+
+        self.stalls += 16;
 
         Ok(format!("ADD SP, n: SP={:04X}, n={:02X}", left, right))
     }
@@ -1279,6 +1331,8 @@ impl Cpu {
         let result = left.wrapping_add(right);
 
         self.set_r16(index, result, false)?;
+
+        self.stalls += 8;
 
         Ok(format!(
             "INC {}: {0}={:04X}",
@@ -1294,6 +1348,8 @@ impl Cpu {
 
         self.set_r16(index, result, false)?;
 
+        self.stalls += 8;
+
         Ok(format!(
             "DEC {}: {0}={:04X}",
             self.r16_str(index, false),
@@ -1304,7 +1360,7 @@ impl Cpu {
     pub fn rlca_8(&mut self) -> Result<String> {
         let val = self.a;
         let c = (val >> 7) & 1;
-        let result = val << 1;
+        let result = val.rotate_left(1);
 
         self.a = result;
 
@@ -1312,6 +1368,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(false);
         self.f.set_c(c == 1);
+
+        self.stalls += 4;
 
         Ok(format!("RLCA: A={:02X}, #={:02X}", val, result))
     }
@@ -1328,13 +1386,15 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
+        self.stalls += 4;
+
         Ok(format!("RLA: A={:02X}, #={:02X}", val, result))
     }
 
     pub fn rrca_8(&mut self) -> Result<String> {
         let val = self.a;
         let c = val & 1;
-        let result = val >> 1;
+        let result = val.rotate_right(1);
 
         self.a = result;
 
@@ -1342,6 +1402,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(false);
         self.f.set_c(c == 1);
+
+        self.stalls += 4;
 
         Ok(format!("RRCA: A={:02X}, #={:02X}", val, result))
     }
@@ -1358,6 +1420,8 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
+        self.stalls += 4;
+
         Ok(format!("RRA: A={:02X}, #={:02X}", val, result))
     }
 
@@ -1372,6 +1436,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(false);
         self.f.set_c(c == 1);
+
+        self.stalls += 8;
 
         Ok(format!(
             "RLC {}: {0}={:02X}, #={:02X}",
@@ -1393,6 +1459,8 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
+        self.stalls += 8;
+
         Ok(format!(
             "RL {}: {0}={:02X}, #={:02X}",
             self.r8_str(index),
@@ -1412,6 +1480,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(false);
         self.f.set_c(c == 1);
+
+        self.stalls += 8;
 
         Ok(format!(
             "RRC {}: {0}={:02X}, #={:02X}",
@@ -1433,6 +1503,8 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
+        self.stalls += 8;
+
         Ok(format!(
             "RR {}: {0}={:02X}, #={:02X}",
             self.r8_str(index),
@@ -1452,6 +1524,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(false);
         self.f.set_c(c == 1);
+
+        self.stalls += 8;
 
         Ok(format!(
             "SLA {}: {0}={:02X}, #={:02X}",
@@ -1473,6 +1547,8 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
+        self.stalls += 8;
+
         Ok(format!(
             "SRA {}: {0}={:02X}, #={:02X}",
             self.r8_str(index),
@@ -1493,6 +1569,8 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(c == 1);
 
+        self.stalls += 8;
+
         Ok(format!(
             "SRL {}: {0}={:02X}, #={:02X}",
             self.r8_str(index),
@@ -1510,6 +1588,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(true);
 
+        self.stalls += 8;
+
         Ok(format!(
             "BIT b, {}: b={}, {0}={:02X}, #={:02X}",
             self.r8_str(index),
@@ -1525,6 +1605,8 @@ impl Cpu {
         let result = left | (1 << right);
 
         self.set_r8(index, result)?;
+
+        self.stalls += 8;
 
         Ok(format!(
             "SET b, {}: b={}, {0}={:02X}, #={:02X}",
@@ -1542,6 +1624,8 @@ impl Cpu {
 
         self.set_r8(index, result)?;
 
+        self.stalls += 8;
+
         Ok(format!(
             "RES b, {}: b={}, {0}={:02X}, #={:02X}",
             self.r8_str(index),
@@ -1555,6 +1639,8 @@ impl Cpu {
         let addr = self.bus.read_word(self.pc)?;
         self.pc = addr;
 
+        self.stalls += 16;
+
         Ok(format!("JP nn: nn={:04X}", addr))
     }
 
@@ -1565,6 +1651,8 @@ impl Cpu {
         if !self.f.z() {
             self.pc = addr;
         }
+
+        self.stalls += 16;
 
         Ok(format!("JP NZ, nn: NZ={}, nn={:04X}", !self.f.z(), addr))
     }
@@ -1577,6 +1665,8 @@ impl Cpu {
             self.pc = addr;
         }
 
+        self.stalls += 16;
+
         Ok(format!("JP Z, nn: Z={}, nn={:04X}", self.f.z(), addr))
     }
 
@@ -1587,6 +1677,8 @@ impl Cpu {
         if !self.f.c() {
             self.pc = addr;
         }
+
+        self.stalls += 16;
 
         Ok(format!("JP NC, nn: NC={}, nn={:04X}", !self.f.c(), addr))
     }
@@ -1599,11 +1691,15 @@ impl Cpu {
             self.pc = addr;
         }
 
+        self.stalls += 16;
+
         Ok(format!("JP C, nn: C={}, nn={:04X}", self.f.c(), addr))
     }
 
     pub fn jp_16_hl(&mut self) -> Result<String> {
         self.pc = self.hl;
+
+        self.stalls += 4;
 
         Ok(format!("JP (HL): (HL)=({:04X})", self.hl))
     }
@@ -1612,6 +1708,8 @@ impl Cpu {
         let index = self.bus.read(self.pc)?;
         self.pc = self.pc.wrapping_add(1);
         self.pc = self.pc.wrapping_add(index as i8 as u16);
+
+        self.stalls += 12;
 
         Ok(format!("JR n: n={}", index))
     }
@@ -1624,6 +1722,8 @@ impl Cpu {
             self.pc = self.pc.wrapping_add(index as i8 as u16);
         }
 
+        self.stalls += 12;
+
         Ok(format!("JR NZ, n: NZ={}, n={}", !self.f.z(), index))
     }
 
@@ -1634,6 +1734,8 @@ impl Cpu {
         if self.f.z() {
             self.pc = self.pc.wrapping_add(index as i8 as u16);
         }
+
+        self.stalls += 12;
 
         Ok(format!("JR Z, n: Z={}, n={}", self.f.z(), index))
     }
@@ -1646,6 +1748,8 @@ impl Cpu {
             self.pc = self.pc.wrapping_add(index as i8 as u16);
         }
 
+        self.stalls += 12;
+
         Ok(format!("JR NC, n: NC={}, n={}", !self.f.c(), index))
     }
 
@@ -1657,6 +1761,8 @@ impl Cpu {
             self.pc = self.pc.wrapping_add(index as i8 as u16);
         }
 
+        self.stalls += 12;
+
         Ok(format!("JR C, n: C={}, n={}", self.f.c(), index))
     }
 
@@ -1664,6 +1770,8 @@ impl Cpu {
         self.sp = self.sp.wrapping_sub(2);
         self.bus.write_word(self.sp, self.pc)?;
         self.pc = addr;
+
+        self.stalls += 24;
 
         Ok(())
     }
@@ -1722,10 +1830,12 @@ impl Cpu {
     }
 
     pub fn restart(&mut self, param: u8) -> Result<String> {
-        let addr = param as u16;
-        self.bus.write_word(self.sp, self.pc)?;
+        let addr = param as u16 * 0x08;
         self.sp = self.sp.wrapping_sub(2);
+        self.bus.write_word(self.sp, self.pc)?;
         self.pc = addr;
+
+        self.stalls += 16;
 
         Ok(format!("RST nn: nn={:04X}", addr))
     }
@@ -1734,6 +1844,8 @@ impl Cpu {
         let addr = self.bus.read_word(self.sp)?;
         self.sp = self.sp.wrapping_add(2);
         self.pc = addr;
+
+        self.stalls += 16;
 
         Ok(format!(
             "RET: (SP)=({:04X})={:04X}",
@@ -1749,6 +1861,8 @@ impl Cpu {
             self.sp = self.sp.wrapping_add(2);
             self.pc = addr;
         }
+
+        self.stalls += 20;
 
         Ok(format!(
             "RET NZ: NZ={}, (SP)=({:04X})={:04X}",
@@ -1766,6 +1880,8 @@ impl Cpu {
             self.pc = addr;
         }
 
+        self.stalls += 20;
+
         Ok(format!(
             "RET Z: Z={}, (SP)=({:04X})={:04X}",
             self.f.z(),
@@ -1781,6 +1897,8 @@ impl Cpu {
             self.sp = self.sp.wrapping_add(2);
             self.pc = addr;
         }
+
+        self.stalls += 20;
 
         Ok(format!(
             "RET NC: NC={}, (SP)=({:04X})={:04X}",
@@ -1798,6 +1916,8 @@ impl Cpu {
             self.pc = addr;
         }
 
+        self.stalls += 20;
+
         Ok(format!(
             "RET C: C={}, (SP)=({:04X})={:04X}",
             self.f.c(),
@@ -1812,6 +1932,8 @@ impl Cpu {
         self.pc = addr;
 
         self.ime = true;
+
+        self.stalls += 16;
 
         Ok(format!(
             "RETI: (SP)=({:04X})={:04X}",
@@ -1833,6 +1955,8 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(false);
 
+        self.stalls += 8;
+
         Ok(format!(
             "SWAP {}: {0}={:02X}, #={:02X}",
             self.r8_str(index),
@@ -1842,33 +1966,32 @@ impl Cpu {
     }
 
     pub fn decimal_adjust_8_a(&mut self) -> Result<String> {
-        let mut result = 0;
         let val = self.a;
 
         // @see https://forums.nesdev.com/viewtopic.php?t=15944
         if !self.f.n() {
-            if self.f.c() || val > 0x99 {
-                result = val.wrapping_add(0x60);
+            if self.f.c() || self.a > 0x99 {
+                self.a = self.a.wrapping_add(0x60);
                 self.f.set_c(true);
             }
-            if self.f.h() || (val & 0x0F) > 0x09 {
-                result = val.wrapping_add(0x06);
+            if self.f.h() || (self.a & 0x0F) > 0x09 {
+                self.a = self.a.wrapping_add(0x06);
             }
         } else {
             if self.f.c() {
-                result = val.wrapping_sub(0x60);
+                self.a = self.a.wrapping_sub(0x60);
             }
             if self.f.h() {
-                result = val.wrapping_sub(0x06);
+                self.a = self.a.wrapping_sub(0x06);
             }
         }
 
-        self.a = result;
-
-        self.f.set_z(result == 0);
+        self.f.set_z(self.a == 0);
         self.f.set_h(false);
 
-        Ok(format!("DAA: A={:02X}, #={:02X}", val, result))
+        self.stalls += 4;
+
+        Ok(format!("DAA: A={:02X}, #={:02X}", val, self.a))
     }
 
     pub fn complement_8_a(&mut self) -> Result<String> {
@@ -1878,6 +2001,8 @@ impl Cpu {
         self.a = result;
         self.f.set_n(true);
         self.f.set_h(true);
+
+        self.stalls += 4;
 
         Ok(format!("CPL: A={:02X}, #={:02X}", val, result))
     }
@@ -1890,6 +2015,8 @@ impl Cpu {
         self.f.set_h(false);
         self.f.set_c(result);
 
+        self.stalls += 4;
+
         Ok(format!("CCF: C={}, #={}", c, result))
     }
 
@@ -1897,6 +2024,8 @@ impl Cpu {
         self.f.set_n(false);
         self.f.set_h(false);
         self.f.set_c(true);
+
+        self.stalls += 4;
 
         Ok("SCF".to_string())
     }
