@@ -1,7 +1,10 @@
+use crate::joypad::Joypad;
 use crate::mbc::Mbc;
 use crate::ppu::Ppu;
+use crate::timer::Timer;
 use anyhow::Result;
 use bitfield::bitfield;
+use bitmatch::bitmatch;
 
 bitfield! {
     #[derive(Default)]
@@ -16,14 +19,16 @@ bitfield! {
 
 pub struct Bus {
     pub ppu: Ppu,
+    pub joypad: Joypad,
+    pub timer: Timer,
     // apu: Apu,
     ram: [u8; 0x8000],
     hram: [u8; 0x0080],
-    // joyCon: JoyCon,
     mbc: Box<dyn Mbc + Send>,
 
     pub ie: Ie,
 
+    prev_serial: bool,
     int_serial: bool,
 }
 
@@ -34,13 +39,21 @@ impl Bus {
             hram: [0; 0x0080],
             ie: Default::default(),
             int_serial: false,
+            prev_serial: false,
             ppu,
             mbc,
+            joypad: Default::default(),
+            timer: Default::default(),
         }
     }
 
     pub fn tick(&mut self) -> Result<()> {
         self.ppu.tick()?;
+        self.ppu.tick()?;
+        self.timer.tick();
+        self.timer.tick();
+        self.timer.tick();
+        self.timer.tick();
         // self.apu.tick()?;
 
         Ok(())
@@ -62,12 +75,28 @@ impl Bus {
         self.ppu.int_lcd_stat = val;
     }
 
+    pub fn irq_timer(&self) -> bool {
+        self.timer.int
+    }
+
+    pub fn set_irq_timer(&mut self, val: bool) {
+        self.timer.int = val;
+    }
+
     pub fn irq_serial(&self) -> bool {
         self.int_serial
     }
 
     pub fn set_irq_serial(&mut self, val: bool) {
         self.int_serial = val;
+    }
+
+    pub fn irq_joypad(&self) -> bool {
+        self.joypad.int
+    }
+
+    pub fn set_irq_joypad(&mut self, val: bool) {
+        self.joypad.int = val;
     }
 
     pub fn read(&self, addr: u16) -> Result<u8> {
@@ -79,8 +108,13 @@ impl Bus {
             0xE000..=0xFDFF => Ok(self.ram[(addr - 0xE000) as usize]),
             0xFE00..=0xFE9F => self.ppu.read_oam(addr),
             0xFEA0..=0xFEFF => Ok(0),
+            0xFF00 => Ok(self.joypad.read()),
             0xFF01 => self.read_serial(),
             0xFF02 => self.read_serial_ctrl(),
+            0xFF04 => Ok(self.timer.read_div()),
+            0xFF05 => Ok(self.timer.read_tima()),
+            0xFF06 => Ok(self.timer.read_tma()),
+            0xFF07 => Ok(self.timer.read_tac()),
             0xFF0F => self.read_irq(),
             0xFF40 => self.ppu.read_lcd_control(),
             0xFF41 => self.ppu.read_lcd_status(),
@@ -106,22 +140,20 @@ impl Bus {
         Ok(((high as u16) << 8) | (low as u16))
     }
 
+    #[bitmatch]
+    #[allow(clippy::many_single_char_names)]
     pub fn read_irq(&self) -> Result<u8> {
-        let mut irq = 0;
+        let v = self.ppu.int_v_blank;
+        let l = self.ppu.int_lcd_stat;
+        let t = self.timer.int;
+        let s = self.int_serial;
+        let j = self.joypad.int;
 
-        if self.ppu.int_v_blank {
-            irq &= 0b00000001;
-        }
+        // let res = bitpack!("000jstlv");
 
-        if self.ppu.int_lcd_stat {
-            irq &= 0b00000010;
-        }
+        // println!("IRQ READ: {:#08b}", res);
 
-        if self.int_serial {
-            irq &= 0b00001000;
-        }
-
-        Ok(irq)
+        Ok(bitpack!("000jstlv"))
     }
 
     pub fn read_serial(&self) -> Result<u8> {
@@ -149,8 +181,28 @@ impl Bus {
             }
             0xFE00..=0xFE9F => self.ppu.write_oam(addr, val),
             0xFEA0..=0xFEFF => Ok(()),
+            0xFF00 => {
+                self.joypad.write(val);
+                Ok(())
+            }
             0xFF01 => self.write_serial(val),
             0xFF02 => self.write_serial_ctrl(val),
+            0xFF04 => {
+                self.timer.write_div(val);
+                Ok(())
+            }
+            0xFF05 => {
+                self.timer.write_tima(val);
+                Ok(())
+            }
+            0xFF06 => {
+                self.timer.write_tma(val);
+                Ok(())
+            }
+            0xFF07 => {
+                self.timer.write_tac(val);
+                Ok(())
+            }
             0xFF0F => self.write_irq(val),
             0xFF40 => self.ppu.write_lcd_control(val),
             0xFF41 => self.ppu.write_lcd_status(val),
@@ -184,10 +236,19 @@ impl Bus {
         Ok(())
     }
 
+    #[bitmatch]
+    #[allow(clippy::many_single_char_names)]
     pub fn write_irq(&mut self, val: u8) -> Result<()> {
-        self.ppu.int_v_blank = val & 0b00000001 > 0;
-        self.ppu.int_lcd_stat = val & 0b00000010 > 0;
-        self.int_serial = val & 0b00001000 > 0;
+        #[bitmatch]
+        let "???jstlv" = val;
+
+        self.ppu.int_v_blank = v > 0;
+        self.ppu.int_lcd_stat = l > 0;
+        self.timer.int = t > 0;
+        self.int_serial = s > 0;
+        self.joypad.int = j > 0;
+
+        // println!("IRQ WRITE: {:#08b}", val);
 
         Ok(())
     }
@@ -198,18 +259,32 @@ impl Bus {
         Ok(())
     }
 
+    #[bitmatch]
     pub fn write_serial_ctrl(&mut self, val: u8) -> Result<()> {
-        if val & 0b00000001 > 0 {
+        #[bitmatch]
+        let "s??????i" = val;
+
+        if i > 0 {
             eprintln!("SERIAL CTRL: INTERNAL CLOCK");
         } else {
             eprintln!("SERIAL CTRL: EXTERNAL CLOCK");
         }
 
-        if val & 0b10000000 > 0 {
+        let cur = if s > 0 {
             eprintln!("SERIAL CTRL: START TRANSFER");
+
+            true
         } else {
             eprintln!("SERIAL CTRL: NO TRANSFER");
+
+            false
+        };
+
+        if self.prev_serial && !cur {
+            self.int_serial = true;
         }
+
+        self.prev_serial = cur;
 
         Ok(())
     }

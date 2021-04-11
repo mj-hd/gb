@@ -1,5 +1,6 @@
 use crate::bus::Bus;
 use crate::cpu::Cpu;
+use crate::joypad::JoypadKey;
 use crate::mbc::new_mbc;
 use crate::ppu::Ppu;
 use crate::rom::Rom;
@@ -22,6 +23,14 @@ impl Gb {
 
     pub fn reset(&mut self) -> Result<()> {
         self.cpu.reset()
+    }
+
+    pub fn press(&mut self, key: JoypadKey) {
+        self.cpu.bus.joypad.press(key)
+    }
+
+    pub fn release(&mut self, key: JoypadKey) {
+        self.cpu.bus.joypad.release(key)
     }
 
     pub fn debug_break(&mut self) -> Result<()> {

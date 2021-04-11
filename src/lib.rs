@@ -1,7 +1,9 @@
 pub mod bus;
 pub mod cpu;
 pub mod gb;
+pub mod joypad;
 pub mod mbc;
 pub mod ppu;
 pub mod rom;
+pub mod timer;
 pub mod utils;

@@ -48,9 +48,10 @@ impl Cpu {
             stalls: 0,
             ime: false,
             halt: false,
-            stepping: true,
+            stepping: false,
             breakpoints: Vec::new(),
             rl,
+            // trace_left: 300000,
             trace_left: 0,
             bus,
         }
@@ -104,16 +105,10 @@ impl Cpu {
     pub fn tick(&mut self) -> Result<()> {
         if self.ime {
             if let Some(mnemonic) = self.interrupt()? {
+                // println!("{}: IE={:?}", mnemonic, self.bus.ie);
+
                 self.ime = false;
                 self.halt = false;
-
-                println!(
-                    "{}: IE={:?} IRQ={:?} IME={}",
-                    mnemonic,
-                    self.bus.ie,
-                    self.bus.read_irq(),
-                    self.ime
-                );
             }
         }
 
@@ -387,35 +382,35 @@ impl Cpu {
             return Ok(Some(format!("INT {:02X}h", int)));
         }
 
-        // int += 0x0008;
+        int += 0x0008;
 
-        // if self.bus.ie.timer() && self.bus.irq.timer() {
-        //     self.bus.irq.set_timer(false);
+        if self.bus.ie.timer() && self.bus.irq_timer() {
+            self.bus.set_irq_timer(false);
 
-        //     self.call(int)?;
+            self.call(int)?;
 
-        //     return Ok(Some(format!("INT {:02X}h", int)));
-        // }
+            return Ok(Some(format!("INT {:02X}h", int)));
+        }
 
-        // int += 0x0008;
+        int += 0x0008;
 
-        // if self.bus.ie.serial() && self.bus.irq.serial() {
-        //     self.bus.irq.set_serial(false);
+        if self.bus.ie.serial() && self.bus.irq_serial() {
+            self.bus.set_irq_serial(false);
 
-        //     self.call(int)?;
+            self.call(int)?;
 
-        //     return Ok(Some(format!("INT {:02X}h", int)));
-        // }
+            return Ok(Some(format!("INT {:02X}h", int)));
+        }
 
-        // int += 0x0008;
+        int += 0x0008;
 
-        // if self.bus.ie.joypad() && self.bus.irq.joypad() {
-        //     self.bus.irq.set_joypad(false);
+        if self.bus.ie.joypad() && self.bus.irq_joypad() {
+            self.bus.set_irq_joypad(false);
 
-        //     self.call(int)?;
+            self.call(int)?;
 
-        //     return Ok(Some(format!("INT {:02X}h", int)));
-        // }
+            return Ok(Some(format!("INT {:02X}h", int)));
+        }
 
         Ok(None)
     }

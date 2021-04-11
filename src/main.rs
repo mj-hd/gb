@@ -1,4 +1,5 @@
 use gb::gb::Gb;
+use gb::joypad::JoypadKey;
 use gb::rom::Rom;
 use pixels::{Pixels, SurfaceTexture};
 use rustyline::Editor;
@@ -84,8 +85,24 @@ fn main() {
                             return;
                         }
 
-                        if input.key_pressed(VirtualKeyCode::B) {
-                            gb.lock().unwrap().debug_break().unwrap();
+                        for (input_key, joypad_key) in [
+                            (VirtualKeyCode::Z, JoypadKey::A),
+                            (VirtualKeyCode::X, JoypadKey::B),
+                            (VirtualKeyCode::C, JoypadKey::Select),
+                            (VirtualKeyCode::V, JoypadKey::Start),
+                            (VirtualKeyCode::Up, JoypadKey::Up),
+                            (VirtualKeyCode::Down, JoypadKey::Down),
+                            (VirtualKeyCode::Left, JoypadKey::Left),
+                            (VirtualKeyCode::Right, JoypadKey::Right),
+                        ]
+                        .iter()
+                        {
+                            if input.key_pressed(*input_key) {
+                                gb.lock().unwrap().press(*joypad_key);
+                            }
+                            if input.key_released(*input_key) {
+                                gb.lock().unwrap().release(*joypad_key);
+                            }
                         }
 
                         if let Some(size) = input.window_resized() {
