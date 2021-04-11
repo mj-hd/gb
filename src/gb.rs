@@ -1,21 +1,22 @@
 use crate::bus::Bus;
 use crate::cpu::Cpu;
-use crate::debugger::Debugger;
-use crate::mbc::RomOnly;
+use crate::joypad::JoypadKey;
+use crate::mbc::new_mbc;
 use crate::ppu::Ppu;
 use crate::rom::Rom;
 use anyhow::Result;
+use rustyline::Editor;
 
 pub struct Gb {
     cpu: Cpu,
 }
 
 impl Gb {
-    pub fn new(rom: Rom, debugger: Debugger) -> Self {
-        let mbc = Box::new(RomOnly::new(rom));
+    pub fn new(rom: Rom, rl: Editor<()>) -> Self {
+        let mbc = new_mbc(rom);
         let ppu = Ppu::new();
         let bus = Bus::new(ppu, mbc);
-        let cpu = Cpu::new(bus, debugger);
+        let cpu = Cpu::new(bus, rl);
 
         Gb { cpu }
     }
@@ -24,8 +25,23 @@ impl Gb {
         self.cpu.reset()
     }
 
+    pub fn press(&mut self, key: JoypadKey) {
+        self.cpu.bus.joypad.press(key)
+    }
+
+    pub fn release(&mut self, key: JoypadKey) {
+        self.cpu.bus.joypad.release(key)
+    }
+
+    pub fn debug_break(&mut self) -> Result<()> {
+        self.cpu.debug_break();
+
+        Ok(())
+    }
+
     pub fn tick(&mut self) -> Result<()> {
         self.cpu.tick()?;
+        self.cpu.bus.tick()?;
 
         Ok(())
     }

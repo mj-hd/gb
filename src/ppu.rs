@@ -1,6 +1,8 @@
 use anyhow::Result;
 use bitfield::bitfield;
+use bitmatch::bitmatch;
 use image::{ImageBuffer, Rgba};
+use std::iter::FromIterator;
 
 const VISIBLE_WIDTH: usize = 160;
 const VISIBLE_HEIGHT: usize = 144;
@@ -42,19 +44,25 @@ bitfield! {
 struct Palette([u8; 4]);
 
 impl From<u8> for Palette {
+    #[bitmatch]
     fn from(val: u8) -> Self {
-        Self([
-            (val >> 6) & 0b00000011,
-            (val >> 4) & 0b00000011,
-            (val >> 2) & 0b00000011,
-            val & 0b00000011,
-        ])
+        #[bitmatch]
+        let "ddccbbaa" = val;
+
+        Self([a, b, c, d])
     }
 }
 
-impl Into<u8> for Palette {
-    fn into(self) -> u8 {
-        self.0[0] << 6 | self.0[1] << 4 | self.0[2] << 2 | self.0[3]
+impl From<Palette> for u8 {
+    #[bitmatch]
+    #[allow(clippy::many_single_char_names)]
+    fn from(p: Palette) -> Self {
+        let a = p.0[0];
+        let b = p.0[1];
+        let c = p.0[2];
+        let d = p.0[3];
+
+        bitpack!("ddccbbaa")
     }
 }
 
@@ -95,6 +103,9 @@ pub struct Ppu {
     object_palette_0: Palette,
     object_palette_1: Palette,
 
+    pub int_v_blank: bool,
+    pub int_lcd_stat: bool,
+
     x: u8,
     y: u8,
 
@@ -122,6 +133,8 @@ impl Ppu {
             object_palette_1: Palette::from(0x00),
             x: 0,
             y: 0,
+            int_v_blank: false,
+            int_lcd_stat: false,
             oam: [Oam::default(); 0xA0],
             pixels: ImageBuffer::new(VISIBLE_WIDTH as u32, VISIBLE_HEIGHT as u32),
         }
@@ -129,37 +142,47 @@ impl Ppu {
 
     fn color_to_pixel(&self, color: u8) -> Rgba<u8> {
         match color {
-            0 => Rgba([0x00, 0x00, 0x00, 0xFF]),
-            1 => Rgba([0x55, 0x55, 0x55, 0xFF]),
-            2 => Rgba([0xAA, 0xAA, 0xAA, 0xFF]),
-            3 => Rgba([0xFF, 0xFF, 0xFF, 0xFF]),
+            0 => Rgba([0xFF, 0xFF, 0xFF, 0xFF]),
+            1 => Rgba([0xAA, 0xAA, 0xAA, 0xFF]),
+            2 => Rgba([0x55, 0x55, 0x55, 0xFF]),
+            3 => Rgba([0x00, 0x00, 0x00, 0xFF]),
             _ => Rgba([0xFF, 0xFF, 0xFF, 0xFF]),
         }
     }
 
+    #[bitmatch]
+    #[allow(clippy::many_single_char_names)]
     fn tile_to_pixel_line(&self, tile_num: u8, row: u8, palette: &Palette) -> [Rgba<u8>; 8] {
         let base_addr = if self.lcd_control.tile_data_select() {
-            0x0000
+            0x0000u16
         } else {
             0x9000u16 - 0x8000u16
         };
+
         let index_addr = if self.lcd_control.tile_data_select() {
             (row as u16) * 2 + (tile_num as u16) * 16
         } else {
-            (row as u16) * 2 + (tile_num as i8 as u16) * 16
+            ((row as i16) * 2 + (tile_num as i8 as i16) * 16) as u16
         };
-        let addr = base_addr + index_addr;
+
+        let addr = base_addr.wrapping_add(index_addr);
 
         let bit = self.vram[addr as usize];
         let color = self.vram[(addr + 1) as usize];
 
         let mut pixels = [Rgba([0xFF, 0xFF, 0xFF, 0xFF]); 8];
 
-        for i in 1..=8 {
-            let palette_num =
-                (((bit >> (8 - i)) & 0b00000001) << 1) | (color >> (8 - i) & 0b00000001);
+        #[bitmatch]
+        let "acegikmo" = bit;
 
-            pixels[i - 1] = self.color_to_pixel(palette.0[palette_num as usize]);
+        #[bitmatch]
+        let "bdfhjlnp" = color;
+
+        #[bitmatch]
+        let "aabbccddeeffgghh" = bitpack!("abcdefghijklmnop");
+
+        for (i, &palette_num) in [a, b, c, d, e, f, g, h].iter().enumerate() {
+            pixels[i] = self.color_to_pixel(palette.0[palette_num as usize]);
         }
 
         pixels
@@ -177,8 +200,10 @@ impl Ppu {
         } else {
             0x9800u16 - 0x8000u16
         };
+
         let index_addr = tile_x as u16 + (tile_y as u16) * 32;
-        let addr = base_addr + index_addr;
+
+        let addr = base_addr.wrapping_add(index_addr);
 
         let tile_num = self.vram[addr as usize];
 
@@ -222,24 +247,25 @@ impl Ppu {
                 }
                 _ => {}
             }
-        } else {
-            self.mode = Mode::VBlank;
         }
 
-        if self.mode == Mode::Drawing {
-            if self.x % 8 == 0 {
-                let tile_x = self.x / 8;
-                let tile_y = self.y / 8;
-                let row = self.y % 8;
+        if self.lines == 144 {
+            self.mode = Mode::VBlank;
+            self.int_v_blank = true;
+        }
 
-                for (i, &pixel) in self
-                    .bg_tile_map_to_pixel_line(tile_x, tile_y, row, &self.bg_palette)
-                    .into_iter()
-                    .enumerate()
-                {
-                    self.pixels
-                        .put_pixel((self.x + i as u8) as u32, self.y as u32, pixel);
-                }
+        if self.mode == Mode::Drawing && self.x % 8 == 0 {
+            let tile_x = self.x / 8;
+            let tile_y = self.y / 8;
+            let row = self.y % 8;
+
+            for (i, &pixel) in self
+                .bg_tile_map_to_pixel_line(tile_x, tile_y, row, &self.bg_palette)
+                .iter()
+                .enumerate()
+            {
+                self.pixels
+                    .put_pixel((self.x + i as u8) as u32, self.y as u32, pixel);
             }
         }
 
@@ -251,7 +277,7 @@ impl Ppu {
     }
 
     pub fn write(&mut self, addr: u16, val: u8) -> Result<()> {
-        println!("PPU write: {:02X}={:02X}", addr, val);
+        // println!("PPU WRITE: {:#02X}={:#02X}", addr, val);
         self.vram[(addr - 0x8000) as usize] = val;
         Ok(())
     }

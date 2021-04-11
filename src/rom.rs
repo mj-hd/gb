@@ -34,6 +34,7 @@ impl Default for MbcType {
 pub enum DestinationCode {
     Japanese = 0x00,
     NonJapanese = 0x01,
+    Unknown = 0xFF,
 }
 
 impl Default for DestinationCode {
@@ -126,7 +127,11 @@ impl Rom {
         rom.sgb_flag = match reader.take(1).bytes().next() {
             Some(Ok(0x00)) => false,
             Some(Ok(0x03)) => true,
-            Some(Ok(unknown)) => bail!("unknown SGB Flag {:#X}", unknown),
+            Some(Ok(unknown)) => {
+                eprintln!("unknown SGB Flag {:#X}", unknown);
+
+                false
+            }
             Some(Err(e)) => bail!("error occured while reading the SGB Flag {}", e),
             None => bail!("unexpected EOF while reading the SGB Flag"),
         };
@@ -145,7 +150,11 @@ impl Rom {
             Some(Ok(0x52)) => (1.1 * 1024.0 * 1024.0) as usize,
             Some(Ok(0x53)) => (1.2 * 1024.0 * 1024.0) as usize,
             Some(Ok(0x54)) => (1.5 * 1024.0 * 1024.0) as usize,
-            Some(Ok(unknown)) => bail!("unknown ROM Size {:#X}", unknown),
+            Some(Ok(unknown)) => {
+                eprintln!("unknown ROM Size {:#X}", unknown);
+
+                0
+            }
             Some(Err(e)) => bail!("error occured while reading the ROM Size {}", e),
             None => bail!("unexpected EOF while reading the ROM Size"),
         };
@@ -158,15 +167,22 @@ impl Rom {
             Some(Ok(0x03)) => 32 * 1024 * 1024_usize,
             Some(Ok(0x04)) => 128 * 1024 * 1024_usize,
             Some(Ok(0x05)) => 64 * 1024 * 1024_usize,
-            Some(Ok(unknown)) => bail!("unknown RAM Size {:#X}", unknown),
+            Some(Ok(unknown)) => {
+                eprintln!("unknown RAM Size {:#X}", unknown);
+
+                0
+            }
             Some(Err(e)) => bail!("error occured while reading the RAM Size {}", e),
             None => bail!("unexpected EOF while reading the RAM Size"),
         };
 
         // 014A - Destination Code
         if let Some(Ok(code)) = reader.take(1).bytes().next() {
-            rom.destination_code =
-                FromPrimitive::from_u8(code).context("unknown destination code")?;
+            if let Some(destination_code) = FromPrimitive::from_u8(code) {
+                rom.destination_code = destination_code;
+            } else {
+                rom.destination_code = DestinationCode::Unknown;
+            }
         } else {
             bail!("failed to parse the Destination Code");
         }

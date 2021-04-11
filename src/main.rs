@@ -1,12 +1,14 @@
-use gb::debugger::Debugger;
 use gb::gb::Gb;
+use gb::joypad::JoypadKey;
 use gb::rom::Rom;
 use pixels::{Pixels, SurfaceTexture};
 use rustyline::Editor;
+use std::env;
 use std::fs::File;
 use std::io::BufReader;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
-use std::u16;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -29,123 +31,88 @@ fn main() {
     let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
     let mut pixels = Pixels::new(160, 144, surface_texture).unwrap();
 
-    let mut rl = Editor::<()>::new();
+    let args = env::args().collect::<Vec<String>>();
 
-    let mut rom = "".to_string();
-    let mut breakpoints = Vec::new();
-
-    loop {
-        let readline = rl.readline(">> ");
-
-        match readline {
-            Ok(line) if line.starts_with("load ") => {
-                if let Some(path) = line.split_ascii_whitespace().nth(1) {
-                    rom = path.to_string();
-                    println!("rom: {}", rom);
-                    continue;
-                }
-
-                println!("load command parse failed");
-            }
-            Ok(line) if line.starts_with("break ") => {
-                if let Some(addr_str) = line.split_ascii_whitespace().nth(1) {
-                    if let Ok(addr) = u16::from_str_radix(addr_str.trim_start_matches("0x"), 16) {
-                        breakpoints.push(addr);
-
-                        println!("add breakpoint: {:04X}", addr);
-                        continue;
-                    }
-                }
-
-                println!("break command parse failed");
-            }
-            Ok(line) if line.starts_with("run") => {
-                break;
-            }
-            Ok(line) => {
-                println!("unknown command {}", line);
-            }
-            Err(_) => {
-                println!("aborted");
-                std::process::exit(0);
-            }
-        }
-    }
-
-    let mut reader = BufReader::new(File::open(rom).unwrap());
+    let mut reader = BufReader::new(File::open(args[1].clone()).unwrap());
     let rom = Rom::new(&mut reader).unwrap();
 
-    println!("rom loaded {:?}", rom);
+    let rl = Editor::<()>::new();
 
-    let debugger = Debugger::new(
-        breakpoints,
-        Box::new(move || loop {
-            let readline = rl.readline(">>> ");
+    let gb = Arc::new(Mutex::new(Gb::new(rom, rl)));
 
-            match readline {
-                Ok(line) if line.starts_with("continue") => {
-                    return false;
+    {
+        let gb = gb.clone();
+
+        gb.lock().unwrap().reset().unwrap();
+
+        thread::spawn(move || loop {
+            // 1 / (1.05 * 1024 * 1024) μs = 0.91 μs ≒ 1μs
+            thread::sleep(Duration::from_micros(1));
+            gb.lock().unwrap().tick().unwrap();
+        });
+    }
+
+    {
+        let mut time = Instant::now();
+
+        event_loop.run(move |event, _, control_flow| {
+            match event {
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
+                    *control_flow = ControlFlow::Exit;
                 }
-                Ok(line) if line.starts_with("step") => {
-                    return true;
+                Event::RedrawRequested(_) => {
+                    gb.lock().unwrap().render(pixels.get_frame()).unwrap();
+                    pixels.render().unwrap();
                 }
-                Ok(line) => {
-                    println!("unknown command {}", line);
-                }
-                Err(_) => {
-                    println!("aborted");
-                    std::process::exit(0);
-                }
+                _ => {}
             }
-        }),
-    );
 
-    let mut gb = Gb::new(rom, debugger);
+            match *control_flow {
+                ControlFlow::Exit => {}
+                _ => {
+                    if time.elapsed() >= Duration::from_millis(1000 / 60) {
+                        time = Instant::now();
 
-    gb.reset().unwrap();
-
-    let mut time = Instant::now();
-
-    event_loop.run(move |event, _, control_flow| {
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                *control_flow = ControlFlow::Exit;
-            }
-            Event::RedrawRequested(_) => {
-                gb.render(pixels.get_frame()).unwrap();
-                pixels.render().unwrap();
-            }
-            _ => {}
-        }
-
-        gb.tick().unwrap();
-
-        match *control_flow {
-            ControlFlow::Exit => {}
-            _ => {
-                if time.elapsed() >= Duration::from_millis(1000 / 60) {
-                    time = Instant::now();
-
-                    window.request_redraw();
-                }
-
-                if input.update(&event) {
-                    if input.key_pressed(VirtualKeyCode::Escape) || input.quit() {
-                        *control_flow = ControlFlow::Exit;
-                        return;
+                        window.request_redraw();
                     }
 
-                    if let Some(size) = input.window_resized() {
-                        pixels.resize(size.width, size.height);
-                    }
-                }
+                    if input.update(&event) {
+                        if input.key_pressed(VirtualKeyCode::Escape) || input.quit() {
+                            *control_flow = ControlFlow::Exit;
+                            return;
+                        }
 
-                // *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_micros(1));
-                *control_flow = ControlFlow::Poll;
+                        for (input_key, joypad_key) in [
+                            (VirtualKeyCode::Z, JoypadKey::A),
+                            (VirtualKeyCode::X, JoypadKey::B),
+                            (VirtualKeyCode::C, JoypadKey::Select),
+                            (VirtualKeyCode::V, JoypadKey::Start),
+                            (VirtualKeyCode::Up, JoypadKey::Up),
+                            (VirtualKeyCode::Down, JoypadKey::Down),
+                            (VirtualKeyCode::Left, JoypadKey::Left),
+                            (VirtualKeyCode::Right, JoypadKey::Right),
+                        ]
+                        .iter()
+                        {
+                            if input.key_pressed(*input_key) {
+                                gb.lock().unwrap().press(*joypad_key);
+                            }
+                            if input.key_released(*input_key) {
+                                gb.lock().unwrap().release(*joypad_key);
+                            }
+                        }
+
+                        if let Some(size) = input.window_resized() {
+                            pixels.resize(size.width, size.height);
+                        }
+                    }
+
+                    *control_flow = ControlFlow::Poll;
+                }
             }
-        }
-    });
+        });
+    }
 }
