@@ -49,10 +49,6 @@ impl Bus {
 
     pub fn tick(&mut self) -> Result<()> {
         self.ppu.tick()?;
-        self.ppu.tick()?;
-        self.timer.tick();
-        self.timer.tick();
-        self.timer.tick();
         self.timer.tick();
         // self.apu.tick()?;
 

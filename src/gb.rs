@@ -41,7 +41,10 @@ impl Gb {
 
     pub fn tick(&mut self) -> Result<()> {
         self.cpu.tick()?;
-        self.cpu.bus.tick()?;
+
+        for _ in 0..4 {
+            self.cpu.bus.tick()?;
+        }
 
         Ok(())
     }

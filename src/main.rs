@@ -46,9 +46,19 @@ fn main() {
         gb.lock().unwrap().reset().unwrap();
 
         thread::spawn(move || loop {
-            // 1 / (1.05 * 1024 * 1024) μs ≒ 900 ns
-            thread::sleep(Duration::from_nanos(900));
-            gb.lock().unwrap().tick().unwrap();
+            let time = Instant::now();
+
+            for _ in 0..17556 {
+                gb.lock().unwrap().tick().unwrap();
+            }
+
+            let elapsed = time.elapsed().as_millis();
+
+            let (wait, c) = ((1000 / 60) as u128).overflowing_sub(elapsed);
+
+            if !c {
+                thread::sleep(Duration::from_millis(wait as u64));
+            }
         });
     }
 
