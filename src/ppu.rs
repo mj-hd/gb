@@ -2,7 +2,6 @@ use anyhow::Result;
 use bitfield::bitfield;
 use bitmatch::bitmatch;
 use image::{ImageBuffer, Rgba};
-use std::iter::FromIterator;
 
 const VISIBLE_WIDTH: usize = 160;
 const VISIBLE_HEIGHT: usize = 144;
@@ -34,6 +33,7 @@ bitfield! {
 bitfield! {
     #[derive(Default, Copy, Clone)]
     struct SpriteFlags(u8);
+    impl Debug;
     palette_num, _: 4;
     x_flip, _: 5;
     y_flip, _: 6;
@@ -66,7 +66,7 @@ impl From<Palette> for u8 {
     }
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 struct Oam {
     y_pos: u8,
     x_pos: u8,
@@ -74,12 +74,47 @@ struct Oam {
     sprite_flag: SpriteFlags,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Mode {
     HBlank = 0,
     VBlank = 1,
     OamScan = 2,
     Drawing = 3,
+}
+
+type ColorIndex = u8;
+
+#[derive(Debug, Copy, Clone)]
+struct OamColor {
+    index: ColorIndex,
+    color: u8,
+    blend: bool,
+}
+
+impl Default for OamColor {
+    fn default() -> Self {
+        Self {
+            index: 0,
+            blend: false,
+            color: 0,
+        }
+    }
+}
+
+impl OamColor {
+    fn from_indexes(indexes: [ColorIndex; 8], blend: bool, palette: &Palette) -> [OamColor; 8] {
+        let mut colors: [OamColor; 8] = [Default::default(); 8];
+
+        for (j, &index) in indexes.iter().enumerate() {
+            colors[j] = OamColor {
+                index,
+                blend,
+                color: palette.0[index as usize],
+            }
+        }
+
+        colors
+    }
 }
 
 pub struct Ppu {
@@ -110,6 +145,10 @@ pub struct Ppu {
     y: u8,
 
     oam: [Oam; 0xA0],
+    buffer: Vec<Oam>,
+
+    cur_bg: [ColorIndex; 256],
+    cur_oam: [OamColor; 256],
 
     pixels: ImageBuffer<Rgba<u8>, Vec<u8>>,
 }
@@ -118,7 +157,7 @@ impl Ppu {
     pub fn new() -> Self {
         Ppu {
             vram: [0; 8 * 1024],
-            mode: Mode::OamScan,
+            mode: Mode::VBlank,
             lcd_control: LcdControl(0),
             lcd_status: LcdStatus(0),
             window_x: 0,
@@ -136,6 +175,9 @@ impl Ppu {
             int_v_blank: false,
             int_lcd_stat: false,
             oam: [Oam::default(); 0xA0],
+            cur_bg: [0; 256],
+            cur_oam: [Default::default(); 256],
+            buffer: Vec::new(),
             pixels: ImageBuffer::new(VISIBLE_WIDTH as u32, VISIBLE_HEIGHT as u32),
         }
     }
@@ -152,17 +194,17 @@ impl Ppu {
 
     #[bitmatch]
     #[allow(clippy::many_single_char_names)]
-    fn tile_to_pixel_line(&self, tile_num: u8, row: u8, palette: &Palette) -> [Rgba<u8>; 8] {
-        let base_addr = if self.lcd_control.tile_data_select() {
-            0x0000u16
-        } else {
+    fn tile_to_indexes(&self, tile_num: u8, row: u8, signed: bool) -> [ColorIndex; 8] {
+        let base_addr = if signed {
             0x9000u16 - 0x8000u16
+        } else {
+            0x0000u16
         };
 
-        let index_addr = if self.lcd_control.tile_data_select() {
-            (row as u16) * 2 + (tile_num as u16) * 16
-        } else {
+        let index_addr = if signed {
             ((row as i16) * 2 + (tile_num as i8 as i16) * 16) as u16
+        } else {
+            (row as u16) * 2 + (tile_num as u16) * 16
         };
 
         let addr = base_addr.wrapping_add(index_addr);
@@ -170,7 +212,7 @@ impl Ppu {
         let bit = self.vram[addr as usize];
         let color = self.vram[(addr + 1) as usize];
 
-        let mut pixels = [Rgba([0xFF, 0xFF, 0xFF, 0xFF]); 8];
+        let mut indexes = [0; 8];
 
         #[bitmatch]
         let "acegikmo" = bit;
@@ -181,20 +223,14 @@ impl Ppu {
         #[bitmatch]
         let "aabbccddeeffgghh" = bitpack!("abcdefghijklmnop");
 
-        for (i, &palette_num) in [a, b, c, d, e, f, g, h].iter().enumerate() {
-            pixels[i] = self.color_to_pixel(palette.0[palette_num as usize]);
+        for (j, &index) in [a, b, c, d, e, f, g, h].iter().enumerate() {
+            indexes[j] = index as u8;
         }
 
-        pixels
+        indexes
     }
 
-    fn bg_tile_map_to_pixel_line(
-        &self,
-        tile_x: u8,
-        tile_y: u8,
-        row: u8,
-        palette: &Palette,
-    ) -> [Rgba<u8>; 8] {
+    fn bg_tile_map_to_colors(&self, tile_x: u8, tile_y: u8, row: u8) -> [ColorIndex; 8] {
         let base_addr = if self.lcd_control.bg_tile_map_select() {
             0x9C00u16 - 0x8000u16
         } else {
@@ -207,7 +243,23 @@ impl Ppu {
 
         let tile_num = self.vram[addr as usize];
 
-        self.tile_to_pixel_line(tile_num, row, &palette)
+        self.tile_to_indexes(tile_num, row, !self.lcd_control.tile_data_select())
+    }
+
+    fn oam_to_colors(&self, oam: &Oam, row: u8) -> [OamColor; 8] {
+        let palette = if oam.sprite_flag.palette_num() {
+            &self.object_palette_1
+        } else {
+            &self.object_palette_0
+        };
+
+        let blend = oam.sprite_flag.priority();
+
+        OamColor::from_indexes(
+            self.tile_to_indexes(oam.tile_num, row, false),
+            blend,
+            palette,
+        )
     }
 
     pub fn tick(&mut self) -> Result<()> {
@@ -216,6 +268,9 @@ impl Ppu {
         if self.cycles >= 456 {
             self.cycles = 0;
             self.lines += 1;
+            self.buffer.clear();
+            self.cur_bg = [0; 256];
+            self.cur_oam = [Default::default(); 256];
         }
 
         if self.lines >= 154 {
@@ -254,19 +309,78 @@ impl Ppu {
             self.int_v_blank = true;
         }
 
-        if self.mode == Mode::Drawing && self.x % 8 == 0 {
-            let tile_x = self.x / 8;
-            let tile_y = self.y / 8;
-            let row = self.y % 8;
+        match self.mode {
+            Mode::Drawing => {
+                if self.x % 8 == 0 {
+                    if self.lcd_control.bg_win_enable() {
+                        let row = self.y % 8;
+                        let x = self.x as usize;
+                        let tile_x = self.x / 8;
+                        let tile_y = self.y / 8;
 
-            for (i, &pixel) in self
-                .bg_tile_map_to_pixel_line(tile_x, tile_y, row, &self.bg_palette)
-                .iter()
-                .enumerate()
-            {
-                self.pixels
-                    .put_pixel((self.x + i as u8) as u32, self.y as u32, pixel);
+                        let colors = self.bg_tile_map_to_colors(tile_x, tile_y, row);
+
+                        self.cur_bg[x..(x + 8)].copy_from_slice(&colors[..]);
+                    }
+                }
+
+                if self.lcd_control.sprite_enable() {
+                    for oam in self.buffer.iter() {
+                        if oam.x_pos == self.x + 8 {
+                            let mut row = self.y + 16 - oam.y_pos;
+                            let x = self.x as usize;
+
+                            if oam.sprite_flag.y_flip() {
+                                row = 7 - row;
+                            }
+
+                            let mut colors = self.oam_to_colors(oam, row);
+
+                            if oam.sprite_flag.x_flip() {
+                                colors.reverse();
+                            }
+
+                            self.cur_oam[x..(x + 8)].copy_from_slice(&colors[..]);
+                        }
+                    }
+                }
             }
+            Mode::HBlank if self.cycles < 400 => {
+                let x = (self.cycles - 240) as usize;
+                let index = self.cur_bg[x] as usize;
+                let mut color = self.bg_palette.0[index];
+
+                let oam = self.cur_oam[x];
+
+                if (!oam.blend || index == 0) && oam.index != 0 {
+                    color = oam.color;
+                }
+
+                self.pixels
+                    .put_pixel(x as u32, self.y as u32, self.color_to_pixel(color));
+            }
+            Mode::OamScan => {
+                if self.cycles % 2 == 0 {
+                    let size = if self.lcd_control.sprite_size() {
+                        16
+                    } else {
+                        8
+                    };
+
+                    let oam = self.oam[(self.cycles / 2) as usize];
+                    let cur_y = self.lines as u16 + 16;
+                    let target_y = oam.y_pos as u16;
+
+                    if oam.x_pos > 8
+                        && cur_y < target_y + size
+                        && target_y <= cur_y
+                        && self.buffer.len() < 10
+                    {
+                        self.buffer.push(oam);
+                    }
+                }
+            }
+            _ => {}
         }
 
         Ok(())
@@ -283,10 +397,41 @@ impl Ppu {
     }
 
     pub fn read_oam(&self, addr: u16) -> Result<u8> {
-        Ok(0)
+        let index_addr = addr - 0xFE00;
+        let index = index_addr / 4;
+        let offset = index_addr % 4;
+        let oam = self.oam[index as usize];
+
+        match offset {
+            0 => Ok(oam.y_pos),
+            1 => Ok(oam.x_pos),
+            2 => Ok(oam.tile_num),
+            3 => Ok(oam.sprite_flag.0),
+            _ => unreachable!(),
+        }
     }
 
     pub fn write_oam(&mut self, addr: u16, val: u8) -> Result<()> {
+        let index_addr = addr - 0xFE00;
+        let index = (index_addr / 4) as usize;
+        let offset = index_addr % 4;
+
+        match offset {
+            0 => {
+                self.oam[index].y_pos = val;
+            }
+            1 => {
+                self.oam[index].x_pos = val;
+            }
+            2 => {
+                self.oam[index].tile_num = val;
+            }
+            3 => {
+                self.oam[index].sprite_flag.0 = val;
+            }
+            _ => unreachable!(),
+        }
+
         Ok(())
     }
 

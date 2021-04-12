@@ -95,6 +95,10 @@ fn main() {
                             return;
                         }
 
+                        if input.key_pressed(VirtualKeyCode::B) {
+                            gb.lock().unwrap().debug_break().unwrap();
+                        }
+
                         for (input_key, joypad_key) in [
                             (VirtualKeyCode::Z, JoypadKey::A),
                             (VirtualKeyCode::X, JoypadKey::B),

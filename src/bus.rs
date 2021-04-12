@@ -205,6 +205,7 @@ impl Bus {
             0xFF42 => self.ppu.write_scroll_y(val),
             0xFF43 => self.ppu.write_scroll_x(val),
             0xFF45 => self.ppu.write_line_compare(val),
+            0xFF46 => self.write_dma(val),
             0xFF47 => self.ppu.write_bg_palette(val),
             0xFF48 => self.ppu.write_object_palette_0(val),
             0xFF49 => self.ppu.write_object_palette_1(val),
@@ -281,6 +282,16 @@ impl Bus {
         }
 
         self.prev_serial = cur;
+
+        Ok(())
+    }
+
+    pub fn write_dma(&mut self, val: u8) -> Result<()> {
+        let base_addr = (val as u16) << 8;
+
+        for i in 0..0x100 {
+            self.write(0xFE00 + i, self.read(base_addr + i)?)?;
+        }
 
         Ok(())
     }
