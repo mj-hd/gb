@@ -147,8 +147,10 @@ pub struct Ppu {
     oam: [Oam; 0xA0],
     buffer: Vec<Oam>,
 
-    cur_bg: [ColorIndex; 256],
-    cur_oam: [OamColor; 256],
+    bg_line: [ColorIndex; 256],
+    oam_line: [OamColor; 256],
+    cur_bg: [ColorIndex; 8],
+    drawing_window: bool,
 
     pixels: ImageBuffer<Rgba<u8>, Vec<u8>>,
 }
@@ -175,8 +177,10 @@ impl Ppu {
             int_v_blank: false,
             int_lcd_stat: false,
             oam: [Oam::default(); 0xA0],
-            cur_bg: [0; 256],
-            cur_oam: [Default::default(); 256],
+            bg_line: [0; 256],
+            oam_line: [Default::default(); 256],
+            cur_bg: [0; 8],
+            drawing_window: false,
             buffer: Vec::new(),
             pixels: ImageBuffer::new(VISIBLE_WIDTH as u32, VISIBLE_HEIGHT as u32),
         }
@@ -230,8 +234,8 @@ impl Ppu {
         indexes
     }
 
-    fn bg_tile_map_to_colors(&self, tile_x: u8, tile_y: u8, row: u8) -> [ColorIndex; 8] {
-        let base_addr = if self.lcd_control.bg_tile_map_select() {
+    fn tile_map_to_colors(&self, tile_x: u8, tile_y: u8, row: u8, high: bool) -> [ColorIndex; 8] {
+        let base_addr = if high {
             0x9C00u16 - 0x8000u16
         } else {
             0x9800u16 - 0x8000u16
@@ -262,6 +266,102 @@ impl Ppu {
         )
     }
 
+    fn scan_oam(&mut self, i: usize) {
+        let size = if self.lcd_control.sprite_size() {
+            16
+        } else {
+            8
+        };
+
+        let oam = self.oam[i];
+        let cur_y = self.lines as u16 + 16;
+        let target_y = oam.y_pos as u16;
+
+        if oam.x_pos > 8 && cur_y < target_y + size && target_y <= cur_y && self.buffer.len() < 10 {
+            self.buffer.push(oam);
+        }
+    }
+
+    fn draw_bg(&mut self) {
+        if self.drawing_window {
+            return;
+        }
+
+        let cx = self.x.wrapping_add(self.scroll_x);
+        let cy = self.y.wrapping_add(self.scroll_y);
+        let col = cx % 8;
+        let row = cy % 8;
+        let tile_x = cx / 8;
+        let tile_y = cy / 8;
+
+        if col == 0 || self.x == 0 {
+            self.cur_bg =
+                self.tile_map_to_colors(tile_x, tile_y, row, self.lcd_control.bg_tile_map_select());
+        }
+        self.bg_line[self.x as usize] = self.cur_bg[col as usize];
+    }
+
+    fn draw_window(&mut self) {
+        if !self.drawing_window && !(self.x + 7 == self.window_x && self.y >= self.window_y) {
+            return;
+        }
+
+        self.drawing_window = true;
+
+        let cx = self.x.wrapping_sub(self.window_x);
+        let cy = self.y.wrapping_sub(self.window_y);
+        let col = cx % 8;
+        let row = cy % 8;
+        let tile_x = cx / 8;
+        let tile_y = cy / 8;
+
+        if col == 0 || self.x == 0 {
+            self.cur_bg = self.tile_map_to_colors(
+                tile_x,
+                tile_y,
+                row,
+                self.lcd_control.window_tile_map_select(),
+            );
+        }
+        self.bg_line[self.x as usize] = self.cur_bg[col as usize];
+    }
+
+    fn draw_sprite(&mut self) {
+        for oam in self.buffer.iter() {
+            if oam.x_pos == self.x + 8 {
+                let mut row = self.y + 16 - oam.y_pos;
+                let x = self.x as usize;
+
+                if oam.sprite_flag.y_flip() {
+                    row = 7 - row;
+                }
+
+                let mut colors = self.oam_to_colors(oam, row);
+
+                if oam.sprite_flag.x_flip() {
+                    colors.reverse();
+                }
+
+                self.oam_line[x..(x + 8)].copy_from_slice(&colors[..]);
+            }
+        }
+    }
+
+    fn put_pixels(&mut self, x: u8) {
+        let x = x as usize;
+        let index = self.bg_line[x] as usize;
+        let mut color = self.bg_palette.0[index];
+
+        let oam = self.oam_line[x];
+
+        if (!oam.blend || index == 0) && oam.index != 0 {
+            color = oam.color;
+        }
+
+        self.pixels
+            .put_pixel(x as u32, self.y as u32, self.color_to_pixel(color));
+    }
+
     pub fn tick(&mut self) -> Result<()> {
         self.cycles += 1;
 
@@ -269,8 +369,8 @@ impl Ppu {
             self.cycles = 0;
             self.lines += 1;
             self.buffer.clear();
-            self.cur_bg = [0; 256];
-            self.cur_oam = [Default::default(); 256];
+            self.bg_line = [0; 256];
+            self.oam_line = [Default::default(); 256];
         }
 
         if self.lines >= 154 {
@@ -299,6 +399,7 @@ impl Ppu {
                 }
                 240..=455 => {
                     self.mode = Mode::HBlank;
+                    self.drawing_window = false;
                 }
                 _ => {}
             }
@@ -311,73 +412,24 @@ impl Ppu {
 
         match self.mode {
             Mode::Drawing => {
-                if self.x % 8 == 0 {
-                    if self.lcd_control.bg_win_enable() {
-                        let row = self.y % 8;
-                        let x = self.x as usize;
-                        let tile_x = self.x / 8;
-                        let tile_y = self.y / 8;
-
-                        let colors = self.bg_tile_map_to_colors(tile_x, tile_y, row);
-
-                        self.cur_bg[x..(x + 8)].copy_from_slice(&colors[..]);
+                if self.lcd_control.bg_win_enable() {
+                    if self.lcd_control.window_display_enable() {
+                        self.draw_window();
                     }
+
+                    self.draw_bg();
                 }
 
                 if self.lcd_control.sprite_enable() {
-                    for oam in self.buffer.iter() {
-                        if oam.x_pos == self.x + 8 {
-                            let mut row = self.y + 16 - oam.y_pos;
-                            let x = self.x as usize;
-
-                            if oam.sprite_flag.y_flip() {
-                                row = 7 - row;
-                            }
-
-                            let mut colors = self.oam_to_colors(oam, row);
-
-                            if oam.sprite_flag.x_flip() {
-                                colors.reverse();
-                            }
-
-                            self.cur_oam[x..(x + 8)].copy_from_slice(&colors[..]);
-                        }
-                    }
+                    self.draw_sprite();
                 }
             }
             Mode::HBlank if self.cycles < 400 => {
-                let x = (self.cycles - 240) as usize;
-                let index = self.cur_bg[x] as usize;
-                let mut color = self.bg_palette.0[index];
-
-                let oam = self.cur_oam[x];
-
-                if (!oam.blend || index == 0) && oam.index != 0 {
-                    color = oam.color;
-                }
-
-                self.pixels
-                    .put_pixel(x as u32, self.y as u32, self.color_to_pixel(color));
+                self.put_pixels((self.cycles - 240) as u8);
             }
             Mode::OamScan => {
                 if self.cycles % 2 == 0 {
-                    let size = if self.lcd_control.sprite_size() {
-                        16
-                    } else {
-                        8
-                    };
-
-                    let oam = self.oam[(self.cycles / 2) as usize];
-                    let cur_y = self.lines as u16 + 16;
-                    let target_y = oam.y_pos as u16;
-
-                    if oam.x_pos > 8
-                        && cur_y < target_y + size
-                        && target_y <= cur_y
-                        && self.buffer.len() < 10
-                    {
-                        self.buffer.push(oam);
-                    }
+                    self.scan_oam((self.cycles / 2) as usize);
                 }
             }
             _ => {}
