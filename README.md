@@ -1,9 +1,6 @@
 # Gameboy Emulator in Rust
 
-
-![image](https://user-images.githubusercontent.com/6854255/111303827-54c0bb00-8698-11eb-9a3b-5356b4c804e7.png)
-
-(Test ROM from https://github.com/dusterherz/gb-hello-world)
+![image](https://user-images.githubusercontent.com/6854255/114482317-5ce12b80-9c41-11eb-8c81-a20ab831bae6.png)
 
 - Language: Rust
 - Graphics Library: [pixels](https://github.com/parasyte/pixels)
