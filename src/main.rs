@@ -48,7 +48,7 @@ fn main() {
         thread::spawn(move || loop {
             let time = Instant::now();
 
-            for _ in 0..17556 {
+            for _ in 0..70224 {
                 gb.lock().unwrap().tick().unwrap();
             }
 

@@ -58,51 +58,27 @@ impl Cpu {
     }
 
     pub fn reset(&mut self) -> Result<()> {
-        self.a = 0x11;
-        self.f = F(0x80);
-        self.bc = 0x0000;
-        self.de = 0xFF56;
-        self.hl = 0x000D;
+        self.a = 0x01;
+        self.f = F(0xB0);
+        self.bc = 0x0013;
+        self.de = 0x00D8;
+        self.hl = 0x014D;
         self.sp = 0xFFFE;
         self.pc = 0x0100;
         self.stalls = 0;
-
-        self.bus.write(0xFF05, 0x00)?;
-        self.bus.write(0xFF06, 0x00)?;
-        self.bus.write(0xFF07, 0x00)?;
-        self.bus.write(0xFF10, 0x80)?;
-        self.bus.write(0xFF11, 0xBF)?;
-        self.bus.write(0xFF12, 0xF3)?;
-        self.bus.write(0xFF14, 0xF3)?;
-        self.bus.write(0xFF16, 0x3F)?;
-        self.bus.write(0xFF17, 0x00)?;
-        self.bus.write(0xFF19, 0xBF)?;
-        self.bus.write(0xFF1A, 0x7F)?;
-        self.bus.write(0xFF1B, 0xFF)?;
-        self.bus.write(0xFF1C, 0x9F)?;
-        self.bus.write(0xFF1E, 0xBF)?;
-        self.bus.write(0xFF20, 0xFF)?;
-        self.bus.write(0xFF21, 0x00)?;
-        self.bus.write(0xFF22, 0x00)?;
-        self.bus.write(0xFF23, 0xBF)?;
-        self.bus.write(0xFF24, 0x77)?;
-        self.bus.write(0xFF25, 0xF3)?;
-        self.bus.write(0xFF26, 0xF1)?;
-        self.bus.write(0xFF40, 0x91)?;
-        self.bus.write(0xFF42, 0x00)?;
-        self.bus.write(0xFF43, 0x00)?;
-        self.bus.write(0xFF45, 0x00)?;
-        self.bus.write(0xFF47, 0xFC)?;
-        self.bus.write(0xFF48, 0xFF)?;
-        self.bus.write(0xFF49, 0xFF)?;
-        self.bus.write(0xFF4A, 0x00)?;
-        self.bus.write(0xFF4B, 0x00)?;
-        self.bus.write(0xFFFF, 0x00)?;
 
         Ok(())
     }
 
     pub fn tick(&mut self) -> Result<()> {
+        if self.stalls > 0 {
+            self.stalls -= 1;
+
+            return Ok(());
+        }
+
+        self.stalls += 4;
+
         if self.ime {
             if let Some(mnemonic) = self.interrupt()? {
                 // println!("{}: IE={:?}", mnemonic, self.bus.ie);
@@ -110,12 +86,6 @@ impl Cpu {
                 self.ime = false;
                 self.halt = false;
             }
-        }
-
-        if self.stalls > 0 {
-            self.stalls -= 1;
-
-            return Ok(());
         }
 
         if self.halt {

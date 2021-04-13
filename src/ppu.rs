@@ -147,8 +147,8 @@ pub struct Ppu {
     oam: [Oam; 0xA0],
     buffer: Vec<Oam>,
 
-    bg_line: [ColorIndex; 256],
-    oam_line: [OamColor; 256],
+    bg_line: [ColorIndex; WIDTH],
+    oam_line: [OamColor; WIDTH],
     cur_bg: [ColorIndex; 8],
     drawing_window: bool,
 
@@ -167,7 +167,7 @@ impl Ppu {
             scroll_x: 0,
             scroll_y: 0,
             cycles: 0,
-            lines: 0x99,
+            lines: 0,
             lines_compare: 0,
             bg_palette: Palette::from(0x00),
             object_palette_0: Palette::from(0x00),
@@ -177,8 +177,8 @@ impl Ppu {
             int_v_blank: false,
             int_lcd_stat: false,
             oam: [Oam::default(); 0xA0],
-            bg_line: [0; 256],
-            oam_line: [Default::default(); 256],
+            bg_line: [0; WIDTH],
+            oam_line: [Default::default(); WIDTH],
             cur_bg: [0; 8],
             drawing_window: false,
             buffer: Vec::new(),
@@ -250,7 +250,21 @@ impl Ppu {
         self.tile_to_indexes(tile_num, row, !self.lcd_control.tile_data_select())
     }
 
-    fn oam_to_colors(&self, oam: &Oam, row: u8) -> [OamColor; 8] {
+    fn oam_to_colors(&self, oam: &Oam) -> [OamColor; 8] {
+        let mut row = self.y + 16 - oam.y_pos;
+        let mut tile = oam.tile_num;
+
+        if self.lcd_control.sprite_size() && row >= 8 {
+            row -= 8;
+            tile |= 0b0000001;
+        } else {
+            tile &= 0b1111110;
+        }
+
+        if oam.sprite_flag.y_flip() {
+            row = 7 - row;
+        }
+
         let palette = if oam.sprite_flag.palette_num() {
             &self.object_palette_1
         } else {
@@ -259,11 +273,14 @@ impl Ppu {
 
         let blend = oam.sprite_flag.priority();
 
-        OamColor::from_indexes(
-            self.tile_to_indexes(oam.tile_num, row, false),
-            blend,
-            palette,
-        )
+        let mut colors =
+            OamColor::from_indexes(self.tile_to_indexes(tile, row, false), blend, palette);
+
+        if oam.sprite_flag.x_flip() {
+            colors.reverse();
+        }
+
+        colors
     }
 
     fn scan_oam(&mut self, i: usize) {
@@ -329,18 +346,9 @@ impl Ppu {
     fn draw_sprite(&mut self) {
         for oam in self.buffer.iter() {
             if oam.x_pos == self.x + 8 {
-                let mut row = self.y + 16 - oam.y_pos;
                 let x = self.x as usize;
 
-                if oam.sprite_flag.y_flip() {
-                    row = 7 - row;
-                }
-
-                let mut colors = self.oam_to_colors(oam, row);
-
-                if oam.sprite_flag.x_flip() {
-                    colors.reverse();
-                }
+                let colors = self.oam_to_colors(oam);
 
                 self.oam_line[x..(x + 8)].copy_from_slice(&colors[..]);
             }
@@ -369,8 +377,8 @@ impl Ppu {
             self.cycles = 0;
             self.lines += 1;
             self.buffer.clear();
-            self.bg_line = [0; 256];
-            self.oam_line = [Default::default(); 256];
+            self.bg_line = [0; WIDTH];
+            self.oam_line = [Default::default(); WIDTH];
         }
 
         if self.lines >= 154 {

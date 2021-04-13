@@ -1,5 +1,6 @@
 use crate::rom::{MbcType, Rom};
-use anyhow::{bail, Result};
+use anyhow::Result;
+use std::cmp::max;
 
 pub trait Mbc {
     fn read(&self, addr: u16) -> Result<u8>;
@@ -78,7 +79,7 @@ impl Mbc1 {
     }
 
     fn read_rom_from_bank(&self, addr: u16) -> Result<u8> {
-        let base_addr = ((self.rom_bank as u16) * 16 * 1024) as usize;
+        let base_addr = ((self.rom_bank as u64) * 16 * 1024) as usize;
         let index_addr = (addr - 0x4000) as usize;
         Ok(self.rom.data[base_addr + index_addr])
     }
@@ -90,7 +91,7 @@ impl Mbc1 {
             return Ok(0);
         }
 
-        let base_addr = ((self.ram_bank as u16) * 8 * 1024) as usize;
+        let base_addr = ((self.ram_bank as u64) * 8 * 1024) as usize;
         let index_addr = (addr - 0xA000) as usize;
         Ok(self.ram[base_addr + index_addr])
     }
@@ -138,13 +139,13 @@ impl Mbc for Mbc1 {
             0x2000..=0x3FFF => {
                 let bank = val & 0b00011111;
 
-                self.rom_bank = std::cmp::min(bank, 1);
+                self.rom_bank = max(bank, 1);
 
                 Ok(())
             }
             0x4000..=0x5FFF => match self.select_mode {
                 Mbc1SelectMode::ROM => {
-                    let bank_high = std::cmp::min(val & 0b00000011, 1);
+                    let bank_high = max(val & 0b00000011, 1);
 
                     self.rom_bank |= bank_high << 5;
 
