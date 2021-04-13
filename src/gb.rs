@@ -1,9 +1,8 @@
 use crate::bus::Bus;
 use crate::cpu::Cpu;
 use crate::joypad::JoypadKey;
-use crate::mbc::new_mbc;
+use crate::mbc::Mbc;
 use crate::ppu::Ppu;
-use crate::rom::Rom;
 use anyhow::Result;
 use rustyline::Editor;
 
@@ -12,8 +11,7 @@ pub struct Gb {
 }
 
 impl Gb {
-    pub fn new(rom: Rom, rl: Editor<()>) -> Self {
-        let mbc = new_mbc(rom);
+    pub fn new(mbc: Box<dyn Mbc + Send>, rl: Editor<()>) -> Self {
         let ppu = Ppu::new();
         let bus = Bus::new(ppu, mbc);
         let cpu = Cpu::new(bus, rl);

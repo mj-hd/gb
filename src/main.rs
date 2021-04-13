@@ -1,5 +1,7 @@
+use gb::board::CubicStyleBoard;
 use gb::gb::Gb;
 use gb::joypad::JoypadKey;
+use gb::mbc::{new_mbc, CubicStyleMbc};
 use gb::rom::Rom;
 use pixels::{Pixels, SurfaceTexture};
 use rustyline::Editor;
@@ -32,13 +34,24 @@ fn main() {
     let mut pixels = Pixels::new(160, 144, surface_texture).unwrap();
 
     let args = env::args().collect::<Vec<String>>();
+    let filename = args[1].clone();
 
-    let mut reader = BufReader::new(File::open(args[1].clone()).unwrap());
-    let rom = Rom::new(&mut reader).unwrap();
+    let mbc = if filename == "board" {
+        let mut board = CubicStyleBoard::new().unwrap();
+
+        board.init().unwrap();
+
+        Box::new(CubicStyleMbc::new(board))
+    } else {
+        let mut reader = BufReader::new(File::open(args[1].clone()).unwrap());
+        let rom = Rom::new(&mut reader).unwrap();
+
+        new_mbc(rom)
+    };
 
     let rl = Editor::<()>::new();
 
-    let gb = Arc::new(Mutex::new(Gb::new(rom, rl)));
+    let gb = Arc::new(Mutex::new(Gb::new(mbc, rl)));
 
     {
         let gb = gb.clone();

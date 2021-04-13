@@ -1,9 +1,10 @@
+use crate::board::CubicStyleBoard;
 use crate::rom::{MbcType, Rom};
 use anyhow::Result;
 use std::cmp::max;
 
 pub trait Mbc {
-    fn read(&self, addr: u16) -> Result<u8>;
+    fn read(&mut self, addr: u16) -> Result<u8>;
     fn write(&mut self, addr: u16, val: u8) -> Result<()>;
 }
 
@@ -32,7 +33,7 @@ impl RomOnly {
 }
 
 impl Mbc for RomOnly {
-    fn read(&self, addr: u16) -> Result<u8> {
+    fn read(&mut self, addr: u16) -> Result<u8> {
         if addr >= 0xA000 {
             return Ok(self.ram[(addr - 0xA000) as usize]);
         }
@@ -113,7 +114,7 @@ impl Mbc1 {
 }
 
 impl Mbc for Mbc1 {
-    fn read(&self, addr: u16) -> Result<u8> {
+    fn read(&mut self, addr: u16) -> Result<u8> {
         match addr {
             0x0000..=0x3FFF => Ok(self.rom.data[addr as usize]),
             0x4000..=0x7FFF => self.read_rom_from_bank(addr),
@@ -169,5 +170,31 @@ impl Mbc for Mbc1 {
             }
             addr => self.write_ram_into_bank(addr, val),
         }
+    }
+}
+
+pub struct CubicStyleMbc {
+    board: CubicStyleBoard,
+}
+
+impl CubicStyleMbc {
+    pub fn new(board: CubicStyleBoard) -> Self {
+        Self { board }
+    }
+}
+
+impl Mbc for CubicStyleMbc {
+    fn read(&mut self, addr: u16) -> Result<u8> {
+        self.board.set_addr(addr);
+        let result = self.board.read_byte()?;
+
+        Ok(result)
+    }
+
+    fn write(&mut self, addr: u16, val: u8) -> Result<()> {
+        self.board.set_addr(addr);
+        self.board.write_byte(val)?;
+
+        Ok(())
     }
 }

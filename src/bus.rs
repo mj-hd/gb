@@ -95,7 +95,7 @@ impl Bus {
         self.joypad.int = val;
     }
 
-    pub fn read(&self, addr: u16) -> Result<u8> {
+    pub fn read(&mut self, addr: u16) -> Result<u8> {
         match addr {
             0x0000..=0x7FFF => self.mbc.read(addr),
             0x8000..=0x9FFF => self.ppu.read(addr),
@@ -129,7 +129,7 @@ impl Bus {
         }
     }
 
-    pub fn read_word(&self, addr: u16) -> Result<u16> {
+    pub fn read_word(&mut self, addr: u16) -> Result<u16> {
         let low = self.read(addr)?;
         let high = self.read(addr + 1)?;
 
@@ -290,7 +290,8 @@ impl Bus {
         let base_addr = (val as u16) << 8;
 
         for i in 0..0x100 {
-            self.write(0xFE00 + i, self.read(base_addr + i)?)?;
+            let data = self.read(base_addr + i)?;
+            self.write(0xFE00 + i, data)?;
         }
 
         Ok(())
