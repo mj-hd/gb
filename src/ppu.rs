@@ -254,15 +254,19 @@ impl Ppu {
         let mut row = self.y + 16 - oam.y_pos;
         let mut tile = oam.tile_num;
 
-        if self.lcd_control.sprite_size() && row >= 8 {
-            row -= 8;
-            tile |= 0b0000001;
-        } else {
-            tile &= 0b1111110;
+        if oam.sprite_flag.y_flip() {
+            let limit = if self.lcd_control.sprite_size() {
+                16
+            } else {
+                8
+            };
+
+            row = limit - row - 1;
         }
 
-        if oam.sprite_flag.y_flip() {
-            row = 7 - row;
+        if row >= 8 {
+            row -= 8;
+            tile += 1;
         }
 
         let palette = if oam.sprite_flag.palette_num() {
