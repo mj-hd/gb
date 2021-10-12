@@ -22,8 +22,8 @@ bitfield! {
 
 bitfield! {
     struct LcdStatus(u8);
-    ppu_mode, _: 1, 0;
-    coincidence_flag, _: 2;
+    ppu_mode, set_ppu_mode: 1, 0;
+    coincidence_flag, set_coincidence_flag: 2;
     mode_0_stat_int_enable, _: 3;
     mode_1_stat_int_enable, _: 4;
     mode_2_stat_int_enable, _: 5;
@@ -74,7 +74,7 @@ struct Oam {
     sprite_flag: SpriteFlags,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 enum Mode {
     HBlank = 0,
     VBlank = 1,
@@ -121,6 +121,7 @@ pub struct Ppu {
     vram: [u8; 8 * 1024],
 
     mode: Mode,
+    prev_mode: Mode,
 
     lcd_control: LcdControl,
     lcd_status: LcdStatus,
@@ -160,6 +161,7 @@ impl Ppu {
         Ppu {
             vram: [0; 8 * 1024],
             mode: Mode::VBlank,
+            prev_mode: Mode::VBlank,
             lcd_control: LcdControl(0),
             lcd_status: LcdStatus(0),
             window_x: 0,
@@ -411,7 +413,6 @@ impl Ppu {
                 }
                 240..=455 => {
                     self.mode = Mode::HBlank;
-                    self.drawing_window = false;
                 }
                 _ => {}
             }
@@ -419,11 +420,15 @@ impl Ppu {
 
         if self.lines == 144 {
             self.mode = Mode::VBlank;
-            self.int_v_blank = true;
         }
+
+        let first = self.prev_mode != self.mode;
 
         match self.mode {
             Mode::Drawing => {
+                if first {
+                    self.lcd_status.set_ppu_mode(0b11);
+                }
                 if self.lcd_control.bg_win_enable() {
                     if self.lcd_control.window_display_enable() {
                         self.draw_window();
@@ -436,16 +441,46 @@ impl Ppu {
                     self.draw_sprite();
                 }
             }
-            Mode::HBlank if self.cycles < 400 => {
-                self.put_pixels((self.cycles - 240) as u8);
+            Mode::HBlank => {
+                if first {
+                    self.lcd_status.set_ppu_mode(0b00);
+
+                    self.lcd_status
+                        .set_coincidence_flag(self.lines == self.lines_compare);
+
+                    self.int_lcd_stat |= self.lcd_status.mode_0_stat_int_enable();
+                    self.int_lcd_stat |= self.lcd_status.coincidence_flag()
+                        && self.lcd_status.lyc_ly_stat_int_enable();
+
+                    self.drawing_window = false;
+                }
+
+                if self.cycles < 400 {
+                    self.put_pixels((self.cycles - 240) as u8);
+                }
             }
             Mode::OamScan => {
+                if first {
+                    self.lcd_status.set_ppu_mode(0b10);
+
+                    self.int_lcd_stat |= self.lcd_status.mode_2_stat_int_enable();
+                }
+
                 if self.cycles % 2 == 0 {
                     self.scan_oam((self.cycles / 2) as usize);
                 }
             }
+            Mode::VBlank => {
+                if first {
+                    self.lcd_status.set_ppu_mode(0b01);
+                    self.int_v_blank = true;
+                    self.int_lcd_stat |= self.lcd_status.mode_1_stat_int_enable();
+                }
+            }
             _ => {}
         }
+
+        self.prev_mode = self.mode;
 
         Ok(())
     }
