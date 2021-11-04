@@ -145,7 +145,7 @@ impl Mbc for Mbc1 {
             }
             0x4000..=0x5FFF => match self.select_mode {
                 Mbc1SelectMode::ROM => {
-                    let bank_high = max(val & 0b00000011, 1);
+                    let bank_high = val & 0b00000011;
 
                     self.rom_bank |= bank_high << 5;
 
